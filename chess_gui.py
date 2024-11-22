@@ -1,9 +1,47 @@
 import pygame
 import chess
+import chess.pgn
 import os
 import time
+from datetime import datetime
 from movegeneration import next_move
 from evaluate import evaluate_board
+
+class GameSaver:
+    def __init__(self, save_directory="saved_games"):
+        """Initialize GameSaver with a directory for saved games."""
+        self.save_directory = save_directory
+        if not os.path.exists(save_directory):
+            os.makedirs(save_directory)
+    
+    def save_game(self, board, white_name="MyEngine", black_name="Human", result=None):
+        """Save a chess game in PGN format."""
+        game = chess.pgn.Game()
+        
+        # Set headers
+        game.headers["Event"] = "Training Game"
+        game.headers["Site"] = "Local Computer"
+        game.headers["Date"] = datetime.now().strftime("%Y.%m.%d")
+        game.headers["Round"] = "1"
+        game.headers["White"] = white_name
+        game.headers["Black"] = black_name
+        game.headers["Result"] = result or "*"
+        
+        # Add all moves
+        node = game
+        for move in board.move_stack:
+            node = node.add_variation(move)
+        
+        # Generate filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"game_{white_name}_vs_{black_name}_{timestamp}.pgn"
+        filepath = os.path.join(self.save_directory, filename)
+        
+        # Save to file
+        with open(filepath, "w") as f:
+            print(game, file=f, end="\n\n")
+        
+        return filepath
 
 class ChessGUI:
     def __init__(self, width=1000, height=800):
@@ -14,6 +52,9 @@ class ChessGUI:
         self.square_size = self.board_size // 8
         self.screen = pygame.display.set_mode((width, height))
         pygame.display.set_caption("Chess Engine")
+        
+        # Initialize game saver
+        self.game_saver = GameSaver()
         
         # Evaluation bar parameters
         self.eval_bar_width = 30
@@ -47,6 +88,7 @@ class ChessGUI:
         self.game_over = False
         self.message = ""
         self.last_move = None
+        self.game_saved = False
         
         # Load piece images
         self.pieces = {}
@@ -287,19 +329,42 @@ class ChessGUI:
                 self.message = self.get_game_over_message()
 
     def get_game_over_message(self):
+        result = None
         if self.board.is_checkmate():
             winner = "Black" if self.board.turn == chess.WHITE else "White"
-            return f"{winner} wins by checkmate!"
+            result = "0-1" if winner == "Black" else "1-0"
+            message = f"{winner} wins by checkmate!"
         elif self.board.is_stalemate():
-            return "Game drawn by stalemate"
+            result = "1/2-1/2"
+            message = "Game drawn by stalemate"
         elif self.board.is_insufficient_material():
-            return "Game drawn by insufficient material"
+            result = "1/2-1/2"
+            message = "Game drawn by insufficient material"
         elif self.board.is_fifty_moves():
-            return "Game drawn by fifty-move rule"
+            result = "1/2-1/2"
+            message = "Game drawn by fifty-move rule"
         elif self.board.is_repetition():
-            return "Game drawn by repetition"
-        return "Game Over"
-
+            result = "1/2-1/2"
+            message = "Game drawn by repetition"
+        else:
+            result = "*"
+            message = "Game Over"
+        
+        # Save the game if it hasn't been saved yet
+        if not self.game_saved:
+            player_name = "Human" if self.player_color == chess.WHITE else "MyEngine"
+            engine_name = "MyEngine" if self.player_color == chess.WHITE else "Human"
+            saved_path = self.game_saver.save_game(
+                self.board,
+                white_name=player_name if self.player_color == chess.WHITE else engine_name,
+                black_name=engine_name if self.player_color == chess.WHITE else player_name,
+                result=result
+            )
+            print(f"Game saved to: {saved_path}")
+            self.game_saved = True
+        
+        return message
+    
     def draw(self):
         self.draw_board()
         self.draw_last_move()

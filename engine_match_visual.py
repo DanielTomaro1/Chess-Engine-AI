@@ -1,10 +1,45 @@
 import pygame
 import chess
 import chess.engine
+import chess.pgn
 import time
 import os
+from datetime import datetime
 from movegeneration import next_move
 from evaluate import evaluate_board
+
+class GameSaver:
+    def __init__(self, save_directory="saved_games"):
+        self.save_directory = save_directory
+        if not os.path.exists(save_directory):
+            os.makedirs(save_directory)
+    
+    def save_game(self, board, white_name="MyEngine", black_name="Stockfish", result=None, stockfish_elo=None):
+        game = chess.pgn.Game()
+        
+        game.headers["Event"] = "Training Game vs Stockfish"
+        game.headers["Site"] = "Local Computer"
+        game.headers["Date"] = datetime.now().strftime("%Y.%m.%d")
+        game.headers["Round"] = "1"
+        game.headers["White"] = white_name
+        game.headers["Black"] = black_name
+        game.headers["Result"] = result or "*"
+        if stockfish_elo:
+            game.headers["BlackElo"] = str(stockfish_elo)
+            game.headers["WhiteElo"] = "?"
+        
+        node = game
+        for move in board.move_stack:
+            node = node.add_variation(move)
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"game_{white_name}_vs_{black_name}{stockfish_elo}_{timestamp}.pgn"
+        filepath = os.path.join(self.save_directory, filename)
+        
+        with open(filepath, "w") as f:
+            print(game, file=f, end="\n\n")
+        
+        return filepath
 
 class VisualEngineMatch:
     def __init__(self, width=1200, height=800):
@@ -23,6 +58,10 @@ class VisualEngineMatch:
         # Game control
         self.is_paused = True
         self.game_started = False
+        self.game_saved = False
+        
+        # Initialize game saver
+        self.game_saver = GameSaver()
         
         # Engine settings
         STOCKFISH_PATH = "/opt/homebrew/bin/stockfish"
@@ -67,7 +106,7 @@ class VisualEngineMatch:
             'p': 'bP', 'n': 'bN', 'b': 'bB', 'r': 'bR', 'q': 'bQ', 'k': 'bK'
         }
         
-        image_directory = "/Users/danieltomaro/Documents/Projects/Chess/images"
+        image_directory = "/Users/danieltomaro/Documents/Projects/Chess-Engine-AI/images"
         
         for chess_symbol, filename_prefix in piece_mapping.items():
             try:
@@ -173,7 +212,6 @@ class VisualEngineMatch:
         self.screen.blit(text, text_rect)
 
     def draw_controls(self):
-        # Draw start/stop button
         pygame.draw.rect(self.screen, (200, 200, 200), self.start_button)
         button_text = "Start" if self.is_paused else "Pause"
         text = self.large_font.render(button_text, True, (0, 0, 0))
@@ -205,7 +243,6 @@ class VisualEngineMatch:
         text = self.font.render(status_text, True, (0, 0, 0))
         self.screen.blit(text, (info_x, info_y + spacing * 3))
 
-        # Draw last move if exists
         if self.last_move:
             last_move_text = f"Last move: {self.last_move}"
             text = self.font.render(last_move_text, True, (0, 0, 0))
@@ -228,9 +265,42 @@ class VisualEngineMatch:
             return True
         return False
 
+    def show_game_over(self):
+        overlay = pygame.Surface((self.width, self.height))
+        overlay.fill((255, 255, 255))
+        overlay.set_alpha(180)
+        self.screen.blit(overlay, (0, 0))
+
+        result = None
+        if self.board.is_checkmate():
+            winner = "Black" if self.board.turn == chess.WHITE else "White"
+            result = "0-1" if winner == "Black" else "1-0"
+            message = f"{winner} wins by checkmate!"
+        else:
+            result = "1/2-1/2"
+            message = "Game drawn!"
+
+        # Save the game if it hasn't been saved yet
+        if not self.game_saved:
+            saved_path = self.game_saver.save_game(
+                self.board,
+                white_name="MyEngine",
+                black_name="Stockfish",
+                result=result,
+                stockfish_elo=self.stockfish_elo
+            )
+            print(f"Game saved to: {saved_path}")
+            self.game_saved = True
+
+        text = self.large_font.render(message, True, (0, 0, 0))
+        text_rect = text.get_rect(center=(self.width/2, self.height/2))
+        self.screen.blit(text, text_rect)
+        pygame.display.flip()
+
     def play_match(self, stockfish_elo=1500):
         self.stockfish_elo = stockfish_elo
         self.stockfish.configure({"UCI_LimitStrength": True, "UCI_Elo": stockfish_elo})
+        self.game_saved = False  # Reset game saved flag for new match
         clock = pygame.time.Clock()
         running = True
 
@@ -273,23 +343,6 @@ class VisualEngineMatch:
 
         pygame.quit()
         self.stockfish.quit()
-
-    def show_game_over(self):
-        overlay = pygame.Surface((self.width, self.height))
-        overlay.fill((255, 255, 255))
-        overlay.set_alpha(180)
-        self.screen.blit(overlay, (0, 0))
-
-        if self.board.is_checkmate():
-            winner = "Black" if self.board.turn == chess.WHITE else "White"
-            message = f"{winner} wins by checkmate!"
-        else:
-            message = "Game drawn!"
-
-        text = self.large_font.render(message, True, (0, 0, 0))
-        text_rect = text.get_rect(center=(self.width/2, self.height/2))
-        self.screen.blit(text, text_rect)
-        pygame.display.flip()
 
 def main():
     print("Visual Engine Match")

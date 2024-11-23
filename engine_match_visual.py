@@ -5,7 +5,7 @@ import chess.pgn
 import time
 import os
 from datetime import datetime
-from movegeneration import next_move
+from movegeneration import next_move, debug_info
 from evaluate import evaluate_board
 
 class GameSaver:
@@ -95,10 +95,16 @@ class VisualEngineMatch:
         # Load pieces
         self.pieces = {}
         self.load_pieces()
+
+        # Add book move tracking
+        self.last_move_from_book = False
         
-        # Font
+        # Update font initialization if not already present
         self.font = pygame.font.SysFont('Arial', 20)
         self.large_font = pygame.font.SysFont('Arial', 24)
+        
+        # Add move history tracking
+        self.move_history = []  # List of tuples (move, is_book_move)
 
     def load_pieces(self):
         piece_mapping = {
@@ -316,15 +322,19 @@ class VisualEngineMatch:
                 # Make moves
                 if self.board.turn == chess.WHITE:
                     # Our engine's move
+                    debug_info.clear()
                     move = next_move(3, self.board)
+                    self.last_move_from_book = debug_info.get("book_move", False)
                 else:
                     # Stockfish's move
                     result = self.stockfish.play(self.board, chess.engine.Limit(time=1.0))
                     move = result.move
+                    self.last_move_from_book = False  # Stockfish doesn't use our book
 
                 # Make the move
                 self.board.push(move)
                 self.last_move = move
+                self.move_history.append((move, self.last_move_from_book))
                 
                 # Update evaluation
                 self.current_eval = evaluate_board(self.board)
@@ -343,6 +353,54 @@ class VisualEngineMatch:
 
         pygame.quit()
         self.stockfish.quit()
+        
+    def draw_game_info(self):
+        info_x = self.board_size + 150
+        info_y = 50
+        spacing = 30
+
+        # Draw move number
+        move_text = f"Move: {len(self.board.move_stack) // 2 + 1}"
+        text = self.font.render(move_text, True, (0, 0, 0))
+        self.screen.blit(text, (info_x, info_y))
+        
+        # Draw turn indicator
+        turn_text = "MyEngine" if self.board.turn else "Stockfish"
+        text = self.font.render(f"{turn_text} to move", True, (0, 0, 0))
+        self.screen.blit(text, (info_x, info_y + spacing))
+        
+        # Draw engine info
+        engine_text = f"Stockfish ELO: {self.stockfish_elo}"
+        text = self.font.render(engine_text, True, (0, 0, 0))
+        self.screen.blit(text, (info_x, info_y + spacing * 2))
+        
+        # Draw game status
+        status_text = "Game Paused" if self.is_paused else "Game Running"
+        text = self.font.render(status_text, True, (0, 0, 0))
+        self.screen.blit(text, (info_x, info_y + spacing * 3))
+
+        # Draw last move with book move indicator
+        if self.last_move:
+            move_source = " (Book Move)" if self.last_move_from_book else ""
+            last_move_text = f"Last move: {self.last_move}{move_source}"
+            text_color = (0, 128, 0) if self.last_move_from_book else (0, 0, 0)
+            text = self.font.render(last_move_text, True, text_color)
+            self.screen.blit(text, (info_x, info_y + spacing * 4))
+
+        # Draw last few moves of the game
+        if self.move_history:
+            history_text = "Recent moves:"
+            text = self.font.render(history_text, True, (0, 0, 0))
+            self.screen.blit(text, (info_x, info_y + spacing * 5))
+            
+            # Show last 5 moves
+            for i, (move, is_book) in enumerate(self.move_history[-5:]):
+                move_text = f"{len(self.move_history)-4+i}. {move}"
+                if is_book:
+                    move_text += " (Book)"
+                text_color = (0, 128, 0) if is_book else (0, 0, 0)
+                text = self.font.render(move_text, True, text_color)
+                self.screen.blit(text, (info_x, info_y + spacing * (6 + i)))
 
 def main():
     print("Visual Engine Match")

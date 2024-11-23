@@ -6,7 +6,7 @@ import os
 import logging
 
 class OpeningBook:
-    def __init__(self, book_path: str = "books/performance.bin"):
+    def __init__(self, book_path: str = "books/Perfect2021.bin"):
         """
         Initialize the opening book handler with a local book file.
         

@@ -4,6 +4,7 @@ import sys
 import time
 from evaluate import evaluate_board, move_value, check_end_game
 from opening_book import OpeningBook
+from transposition_table import TranspositionTable, NodeType
 
 debug_info: Dict[str, Any] = {}
 
@@ -16,6 +17,9 @@ BOOK_PATH = "/Users/danieltomaro/Documents/Projects/Chess-Engine-AI/books/Perfec
 
 # Initialize opening book with absolute path
 book = OpeningBook(BOOK_PATH)
+
+# Initialize transposition table
+tt = TranspositionTable(64)  # 64 MB table
 
 def quiescence_search(board: chess.Board, alpha: float, beta: float, depth: int = 4) -> tuple[float, int]:
     """
@@ -68,34 +72,34 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, depth: int 
 
 
 def next_move(depth: int, board: chess.Board, debug=True) -> chess.Move:
-    """
-    What is the next best move?
-    First checks opening book, then falls back to engine calculation.
-    """
+    """Get next move using transposition table."""
     debug_info.clear()
     debug_info["nodes"] = 0
     t0 = time.time()
+    
+    # Clear statistics for new search
+    tt.new_search()
 
-    print("\n--- Checking for book move ---")
-    # Try to get a book move first
+    # Try book move first
     book_move = book.get_book_move(board)
     if book_move is not None:
         debug_info["time"] = time.time() - t0
         debug_info["book_move"] = True
-        print(f"✓ Using book move: {book_move}")
-        if debug:
-            print(f"info {debug_info}")
         return book_move
-    else:
-        print("✗ No book move found, calculating...")
 
-    # Fall back to engine calculation if no book move is found
+    # Search with transposition table
     move = minimax_root(depth, board)
     
+    # Add TT statistics to debug info
+    stats = tt.get_stats()
+    debug_info["tt_hits"] = stats["hits"]
+    debug_info["tt_hit_rate"] = f"{stats['hit_rate']:.2%}"
     debug_info["time"] = time.time() - t0
     debug_info["book_move"] = False
+    
     if debug:
         print(f"info {debug_info}")
+        
     return move
 ##############################################################################################
 def get_ordered_moves(board: chess.Board) -> List[chess.Move]:
@@ -144,9 +148,18 @@ def minimax_root(depth: int, board: chess.Board) -> chess.Move:
 ##############################################################################################
 def minimax(depth: int, board: chess.Board, alpha: float, beta: float, 
             is_maximising_player: bool) -> float:
-    """
-    Enhanced minimax with quiescence search.
-    """
+    """Enhanced minimax with transposition table."""
+    
+    # Check transposition table
+    tt_entry = tt.lookup(board)
+    if tt_entry is not None and tt_entry.depth >= depth:
+        if tt_entry.node_type == NodeType.EXACT:
+            return tt_entry.score
+        elif tt_entry.node_type == NodeType.ALPHA and tt_entry.score <= alpha:
+            return alpha
+        elif tt_entry.node_type == NodeType.BETA and tt_entry.score >= beta:
+            return beta
+
     debug_info["nodes"] += 1
 
     if board.is_checkmate():
@@ -154,44 +167,69 @@ def minimax(depth: int, board: chess.Board, alpha: float, beta: float,
     elif board.is_game_over():
         return 0
 
-    # When we reach depth 0, use quiescence search instead of static evaluation
     if depth == 0:
-        score, nodes = quiescence_search(board, alpha, beta)
-        debug_info["nodes"] += nodes
+        score = evaluate_board(board)
+        tt.store(board, 0, score, NodeType.EXACT)
         return score
 
+    best_move = None
+    original_alpha = alpha
+
     if is_maximising_player:
-        best_move = -float("inf")
+        best_score = -float("inf")
         moves = get_ordered_moves(board)
+        
+        # If we have a TT move, try it first
+        if tt_entry and tt_entry.best_move in moves:
+            moves.remove(tt_entry.best_move)
+            moves.insert(0, tt_entry.best_move)
+        
         for move in moves:
             board.push(move)
-            curr_move = minimax(depth - 1, board, alpha, beta, not is_maximising_player)
-            if curr_move > MATE_THRESHOLD:
-                curr_move -= 1
-            elif curr_move < -MATE_THRESHOLD:
-                curr_move += 1
-            best_move = max(best_move, curr_move)
+            score = minimax(depth - 1, board, alpha, beta, False)
             board.pop()
-            alpha = max(alpha, best_move)
+            
+            if score > best_score:
+                best_score = score
+                best_move = move
+                
+            alpha = max(alpha, score)
             if beta <= alpha:
-                return best_move
-        return best_move
+                break
+                
     else:
-        best_move = float("inf")
+        best_score = float("inf")
         moves = get_ordered_moves(board)
+        
+        # If we have a TT move, try it first
+        if tt_entry and tt_entry.best_move in moves:
+            moves.remove(tt_entry.best_move)
+            moves.insert(0, tt_entry.best_move)
+            
         for move in moves:
             board.push(move)
-            curr_move = minimax(depth - 1, board, alpha, beta, not is_maximising_player)
-            if curr_move > MATE_THRESHOLD:
-                curr_move -= 1
-            elif curr_move < -MATE_THRESHOLD:
-                curr_move += 1
-            best_move = min(best_move, curr_move)
+            score = minimax(depth - 1, board, alpha, beta, True)
             board.pop()
-            beta = min(beta, best_move)
+            
+            if score < best_score:
+                best_score = score
+                best_move = move
+                
+            beta = min(beta, score)
             if beta <= alpha:
-                return best_move
-        return best_move
+                break
+
+    # Store position in transposition table
+    if best_score <= original_alpha:
+        node_type = NodeType.BETA
+    elif best_score >= beta:
+        node_type = NodeType.ALPHA
+    else:
+        node_type = NodeType.EXACT
+        
+    tt.store(board, depth, best_score, node_type, best_move)
+    
+    return best_score
     
 def get_ordered_moves(board: chess.Board) -> List[chess.Move]:
     """

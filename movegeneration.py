@@ -3,24 +3,40 @@ import chess
 import sys
 import time
 from evaluate import evaluate_board, move_value, check_end_game
-##############################################################################################
+from opening_book import OpeningBook
+
 debug_info: Dict[str, Any] = {}
 
-MATE_SCORE     = 1000000000
-MATE_THRESHOLD =  999000000
-##############################################################################################
+MATE_SCORE = 1000000000
+MATE_THRESHOLD = 999000000
+
+# Initialize opening book
+book = OpeningBook("books/performance.bin")
+
 def next_move(depth: int, board: chess.Board, debug=True) -> chess.Move:
     """
     What is the next best move?
+    First checks opening book, then falls back to engine calculation if no book move is found.
     """
     debug_info.clear()
     debug_info["nodes"] = 0
     t0 = time.time()
 
-    move = minimax_root(depth, board)
+    # Try to get a book move first
+    book_move = book.get_book_move(board)
+    if book_move is not None:
+        debug_info["time"] = time.time() - t0
+        debug_info["book_move"] = True
+        if debug:
+            print(f"info {debug_info}")
+        return book_move
 
+    # Fall back to engine calculation if no book move is found
+    move = minimax_root(depth, board)
+    
     debug_info["time"] = time.time() - t0
-    if debug == True:
+    debug_info["book_move"] = False
+    if debug:
         print(f"info {debug_info}")
     return move
 ##############################################################################################

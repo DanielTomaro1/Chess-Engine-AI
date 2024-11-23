@@ -5,6 +5,7 @@ import time
 from evaluate import evaluate_board, move_value, check_end_game
 from opening_book import OpeningBook
 from transposition_table import TranspositionTable, NodeType
+from game_learner import GameLearner
 
 debug_info: Dict[str, Any] = {}
 
@@ -17,6 +18,9 @@ BOOK_PATH = "/Users/danieltomaro/Documents/Projects/Chess-Engine-AI/books/Perfec
 
 # Initialize opening book with absolute path
 book = OpeningBook(BOOK_PATH)
+
+# Initialize learner
+learner = GameLearner()
 
 # Initialize transposition table
 tt = TranspositionTable(64)  # 64 MB table
@@ -72,13 +76,10 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, depth: int 
 
 
 def next_move(depth: int, board: chess.Board, debug=True) -> chess.Move:
-    """Get next move using transposition table."""
+    """Get next move, considering learned positions."""
     debug_info.clear()
     debug_info["nodes"] = 0
     t0 = time.time()
-    
-    # Clear statistics for new search
-    tt.new_search()
 
     # Try book move first
     book_move = book.get_book_move(board)
@@ -87,19 +88,20 @@ def next_move(depth: int, board: chess.Board, debug=True) -> chess.Move:
         debug_info["book_move"] = True
         return book_move
 
-    # Search with transposition table
+    # Try learned move
+    learned_move = learner.get_move_suggestion(board)
+    if learned_move is not None:
+        debug_info["time"] = time.time() - t0
+        debug_info["learned_move"] = True
+        return learned_move
+
+    # Fall back to regular search
     move = minimax_root(depth, board)
     
-    # Add TT statistics to debug info
-    stats = tt.get_stats()
-    debug_info["tt_hits"] = stats["hits"]
-    debug_info["tt_hit_rate"] = f"{stats['hit_rate']:.2%}"
     debug_info["time"] = time.time() - t0
     debug_info["book_move"] = False
+    debug_info["learned_move"] = False
     
-    if debug:
-        print(f"info {debug_info}")
-        
     return move
 ##############################################################################################
 def get_ordered_moves(board: chess.Board) -> List[chess.Move]:

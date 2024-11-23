@@ -11,7 +11,11 @@ MATE_SCORE = 1000000000
 MATE_THRESHOLD = 999000000
 
 # Initialize opening book
-book = OpeningBook("books/Perfect2021.bin")
+# Use absolute path to the book file
+BOOK_PATH = "/Users/danieltomaro/Documents/Projects/Chess-Engine-AI/books/Perfect2021.bin"
+
+# Initialize opening book with absolute path
+book = OpeningBook(BOOK_PATH)
 
 def next_move(depth: int, board: chess.Board, debug=True) -> chess.Move:
     """

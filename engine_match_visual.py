@@ -7,6 +7,7 @@ import os
 from datetime import datetime
 from movegeneration import next_move, debug_info
 from evaluate import evaluate_board
+from pgn_handler import PGNHandler
 
 class GameSaver:
     def __init__(self, save_directory="saved_games"):
@@ -51,6 +52,9 @@ class VisualEngineMatch:
         self.screen = pygame.display.set_mode((width, height))
         pygame.display.set_caption("Chess Engine Match")
         
+        # Initialize PGN handler
+        self.pgn_handler = PGNHandler("stockfish_matches")
+        
         # Board state
         self.board = chess.Board()
         self.last_move = None
@@ -60,38 +64,50 @@ class VisualEngineMatch:
         self.game_started = False
         self.game_saved = False
         
-        # Initialize game saver
-        self.game_saver = GameSaver()
-        
         # Engine settings
         STOCKFISH_PATH = "/opt/homebrew/bin/stockfish"
         self.stockfish = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
         self.stockfish_elo = 1500
         
-        # Colors
+        # Add move history tracking
+        self.move_history = []
+        self.current_move_index = 0
+        
+        # Initialize colors and styles
         self.LIGHT_SQUARE = (240, 217, 181)
         self.DARK_SQUARE = (181, 136, 99)
         self.HIGHLIGHT = (130, 151, 105)
-        self.LAST_MOVE = (255, 255, 0, 128)
+        self.BUTTON_COLOR = (200, 200, 200)
+        self.BUTTON_HOVER_COLOR = (180, 180, 180)
+        
+        # Button dimensions and positions
+        button_width = 120
+        button_height = 40
+        button_x = self.board_size + 50
+        base_button_y = 400
+        spacing = 50
+        
+        # Create buttons
+        self.start_button = pygame.Rect(button_x, base_button_y, button_width, button_height)
+        self.save_button = pygame.Rect(button_x, base_button_y + spacing, button_width, button_height)
+        self.prev_button = pygame.Rect(button_x, base_button_y + spacing * 2, button_width, button_height)
+        self.next_button = pygame.Rect(button_x, base_button_y + spacing * 3, button_width, button_height)
+        
+        # Font initialization
+        self.font = pygame.font.SysFont('Arial', 20)
+        self.large_font = pygame.font.SysFont('Arial', 24)
         
         # Evaluation bar
         self.eval_bar_width = 40
-        self.eval_bar_height = self.height - 100  # Slightly shorter than window
+        self.eval_bar_height = self.height - 100
         self.eval_bar_x = self.board_size + 50
-        self.eval_bar_y = 50  # Start slightly below top
+        self.eval_bar_y = 50
         self.current_eval = 0
         self.smooth_eval = 0
         
-        # Buttons
-        self.button_width = 150
-        self.button_height = 50
-        self.start_button = pygame.Rect(
-            self.board_size + 150, 
-            self.height - 150, 
-            self.button_width, 
-            self.button_height
-        )
-        
+        # Last move information
+        self.last_move_from_book = False
+
         # Load pieces
         self.pieces = {}
         self.load_pieces()
@@ -217,12 +233,24 @@ class VisualEngineMatch:
         pygame.draw.rect(self.screen, (255, 255, 255), text_rect.inflate(10, 4))
         self.screen.blit(text, text_rect)
 
-    def draw_controls(self):
-        pygame.draw.rect(self.screen, (200, 200, 200), self.start_button)
-        button_text = "Start" if self.is_paused else "Pause"
-        text = self.large_font.render(button_text, True, (0, 0, 0))
-        text_rect = text.get_rect(center=self.start_button.center)
-        self.screen.blit(text, text_rect)
+    def draw_buttons(self):
+        mouse_pos = pygame.mouse.get_pos()
+        buttons = [
+            (self.start_button, "Start" if not self.game_started else ("Pause" if not self.is_paused else "Resume")),
+            (self.save_button, "Save PGN"),
+            (self.prev_button, "← Previous"),
+            (self.next_button, "Next →")
+        ]
+        
+        for button, text in buttons:
+            # Change color if mouse is hovering over button
+            color = self.BUTTON_HOVER_COLOR if button.collidepoint(mouse_pos) else self.BUTTON_COLOR
+            pygame.draw.rect(self.screen, color, button)
+            pygame.draw.rect(self.screen, (100, 100, 100), button, 2)  # Button border
+            
+            text_surf = self.font.render(text, True, (0, 0, 0))
+            text_rect = text_surf.get_rect(center=button.center)
+            self.screen.blit(text_surf, text_rect)
 
     def draw_game_info(self):
         info_x = self.board_size + 150
@@ -255,21 +283,99 @@ class VisualEngineMatch:
             self.screen.blit(text, (info_x, info_y + spacing * 4))
 
     def draw(self):
+        """Update display with all components."""
         self.screen.fill((255, 255, 255))
         self.draw_board()
         self.draw_last_move()
         self.draw_pieces()
         self.draw_eval_bar()
-        self.draw_controls()
         self.draw_game_info()
+        self.draw_buttons()
+        self.draw_move_history()
         pygame.display.flip()
+    
+    def draw_move_history(self):
+        """Draw the move history panel."""
+        history_x = self.board_size + 200
+        history_y = 400
+        spacing = 25
+        
+        title = self.font.render("Move History:", True, (0, 0, 0))
+        self.screen.blit(title, (history_x, history_y - spacing))
+        
+        # Display last 15 moves
+        start_idx = max(0, len(self.move_history) - 15)
+        for i, (move, is_book) in enumerate(self.move_history[start_idx:]):
+            move_number = start_idx + i + 1
+            player = "Engine" if move_number % 2 == 1 else "Stockfish"
+            move_text = f"{move_number}. {player}: {move}"
+            color = (0, 128, 0) if is_book else (0, 0, 0)
+            text = self.font.render(move_text, True, color)
+            self.screen.blit(text, (history_x, history_y + spacing * i))
 
     def handle_click(self, pos):
-        if self.start_button.collidepoint(pos):
-            self.is_paused = not self.is_paused
-            self.game_started = True
-            return True
-        return False
+        """Handle mouse clicks on buttons."""
+        try:
+            if self.start_button.collidepoint(pos):
+                if not self.game_started:
+                    self.game_started = True
+                    self.is_paused = False
+                    print("Game Started!")
+                else:
+                    self.is_paused = not self.is_paused
+                    print("Game Paused!" if self.is_paused else "Game Resumed!")
+                return True
+                
+            elif self.save_button.collidepoint(pos):
+                # Enhanced save functionality with error handling
+                try:
+                    result = "*"  # Default result for ongoing games
+                    if self.board.is_game_over():
+                        if self.board.is_checkmate():
+                            result = "1-0" if self.board.turn == chess.BLACK else "0-1"
+                        else:
+                            result = "1/2-1/2"
+                    
+                    headers = {
+                        "Event": "Engine vs Stockfish Match",
+                        "Site": "Local Computer",
+                        "Date": datetime.now().strftime("%Y.%m.%d"),
+                        "White": "MyEngine",
+                        "Black": f"Stockfish (ELO: {self.stockfish_elo})",
+                        "Result": result,
+                        "TimeControl": "1+0",
+                        "Opening": "Perfect2021 Book",  # Add book information
+                        "WhiteElo": "?",
+                        "BlackElo": str(self.stockfish_elo)
+                    }
+                    
+                    filepath = self.pgn_handler.save_game(self.board, headers)
+                    print(f"Game successfully saved to: {filepath}")
+                    
+                    # Read back the saved file to verify
+                    with open(filepath, 'r') as f:
+                        content = f.read()
+                        print(f"Verified save - file contains {len(content)} characters")
+                    
+                    return True
+                    
+                except Exception as e:
+                    print(f"Error saving game: {str(e)}")
+                    return False
+                
+            elif self.prev_button.collidepoint(pos):
+                self.navigate_moves(-1)
+                return True
+                
+            elif self.next_button.collidepoint(pos):
+                self.navigate_moves(1)
+                return True
+                
+            return False
+            
+        except Exception as e:
+            print(f"Error in handle_click: {str(e)}")
+            return False
 
     def show_game_over(self):
         overlay = pygame.Surface((self.width, self.height))
@@ -302,11 +408,88 @@ class VisualEngineMatch:
         text_rect = text.get_rect(center=(self.width/2, self.height/2))
         self.screen.blit(text, text_rect)
         pygame.display.flip()
+    
+    def draw_pgn_controls(self):
+        """Draw PGN control buttons and move history."""
+        # Draw buttons
+        buttons = [
+            (self.save_button, "Save PGN"),
+            (self.prev_button, "← Previous"),
+            (self.next_button, "Next →"),
+            (self.pause_button, "Pause" if not self.is_paused else "Resume")
+        ]
+        
+        for button, text in buttons:
+            pygame.draw.rect(self.screen, (200, 200, 200), button)
+            text_surf = self.font.render(text, True, (0, 0, 0))
+            text_rect = text_surf.get_rect(center=button.center)
+            self.screen.blit(text_surf, text_rect)
+        
+        # Draw move history
+        history_x = self.board_size + 200
+        history_y = 400
+        spacing = 20
+        
+        title = self.font.render("Move History:", True, (0, 0, 0))
+        self.screen.blit(title, (history_x, history_y))
+        
+        # Display last 15 moves
+        start_idx = max(0, len(self.move_history) - 15)
+        for i, (move, is_book) in enumerate(self.move_history[start_idx:]):
+            move_number = start_idx + i + 1
+            player = "Engine" if move_number % 2 == 1 else "Stockfish"
+            move_text = f"{move_number}. {player}: {move}"
+            color = (0, 128, 0) if is_book else (0, 0, 0)
+            text = self.font.render(move_text, True, color)
+            self.screen.blit(text, (history_x, history_y + spacing * (i + 1)))
+
+    def handle_pgn_button_click(self, pos):
+        """Handle clicks on PGN control buttons."""
+        if self.save_button.collidepoint(pos):
+            headers = {
+                "Event": "Engine vs Stockfish Match",
+                "Site": "Local Computer",
+                "Date": datetime.now().strftime("%Y.%m.%d"),
+                "White": "MyEngine",
+                "Black": f"Stockfish (ELO: {self.stockfish_elo})",
+                "TimeControl": "1+0"
+            }
+            filepath = self.pgn_handler.save_game(self.board, headers)
+            print(f"Game saved to: {filepath}")
+            
+        elif self.prev_button.collidepoint(pos):
+            self.navigate_moves(-1)
+            
+        elif self.next_button.collidepoint(pos):
+            self.navigate_moves(1)
+            
+        elif self.pause_button.collidepoint(pos):
+            self.is_paused = not self.is_paused
+
+    def navigate_moves(self, direction: int):
+        """Navigate through move history."""
+        if not self.move_history:
+            return
+            
+        target_index = self.current_move_index + direction
+        
+        if 0 <= target_index <= len(self.move_history):
+            # Reset board to starting position
+            self.board = chess.Board()
+            self.current_move_index = 0
+            
+            # Replay moves up to target index
+            for i in range(target_index):
+                move = chess.Move.from_uci(self.move_history[i][0])  # [0] is the move, [1] is is_book
+                self.board.push(move)
+                self.current_move_index = i + 1
 
     def play_match(self, stockfish_elo=1500):
+        """Main game loop."""
         self.stockfish_elo = stockfish_elo
         self.stockfish.configure({"UCI_LimitStrength": True, "UCI_Elo": stockfish_elo})
-        self.game_saved = False  # Reset game saved flag for new match
+        self.move_history = []
+        self.current_move_index = 0
         clock = pygame.time.Clock()
         running = True
 
@@ -318,23 +501,24 @@ class VisualEngineMatch:
                     if event.button == 1:  # Left click
                         self.handle_click(event.pos)
 
-            if not self.is_paused and self.game_started and not self.board.is_game_over():
+            if self.game_started and not self.is_paused and not self.board.is_game_over():
                 # Make moves
                 if self.board.turn == chess.WHITE:
                     # Our engine's move
                     debug_info.clear()
                     move = next_move(3, self.board)
-                    self.last_move_from_book = debug_info.get("book_move", False)
+                    is_book_move = debug_info.get("book_move", False)
                 else:
                     # Stockfish's move
                     result = self.stockfish.play(self.board, chess.engine.Limit(time=1.0))
                     move = result.move
-                    self.last_move_from_book = False  # Stockfish doesn't use our book
+                    is_book_move = False
 
-                # Make the move
+                # Make the move and record it
                 self.board.push(move)
+                self.move_history.append((move.uci(), is_book_move))
+                self.current_move_index = len(self.move_history)
                 self.last_move = move
-                self.move_history.append((move, self.last_move_from_book))
                 
                 # Update evaluation
                 self.current_eval = evaluate_board(self.board)
@@ -342,7 +526,6 @@ class VisualEngineMatch:
                 # Delay to make the game viewable
                 time.sleep(1)
             
-            # Always draw the current position
             self.draw()
             
             if self.board.is_game_over():

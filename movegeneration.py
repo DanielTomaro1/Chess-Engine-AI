@@ -11,7 +11,7 @@ MATE_SCORE = 1000000000
 MATE_THRESHOLD = 999000000
 
 # Initialize opening book
-book = OpeningBook("books/performance.bin")
+book = OpeningBook("books/Perfect2021.bin")
 
 def next_move(depth: int, board: chess.Board, debug=True) -> chess.Move:
     """

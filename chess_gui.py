@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 from movegeneration import next_move, debug_info
 from evaluate import evaluate_board
+from pgn_handler import PGNHandler
 
 class GameSaver:
     def __init__(self, save_directory="saved_games"):
@@ -63,7 +64,25 @@ class ChessGUI:
         # Status text position
         self.status_x = self.board_size + 50
         self.status_y = self.height - 200
+
+        # Initialize PGN handler
+        self.pgn_handler = PGNHandler()
+        # Add game history tracking
+        self.move_history = []
+        self.current_move_index = 0
+
+         # Add buttons for PGN features
+        button_width = 100
+        button_height = 30
+        button_x = self.board_size + 50
+        base_button_y = 600
+        spacing = 40
         
+        self.save_button = pygame.Rect(button_x, base_button_y, button_width, button_height)
+        self.load_button = pygame.Rect(button_x, base_button_y + spacing, button_width, button_height)
+        self.prev_button = pygame.Rect(button_x, base_button_y + spacing * 2, button_width, button_height)
+        self.next_button = pygame.Rect(button_x, base_button_y + spacing * 3, button_width, button_height)
+    
         # Evaluation bar parameters
         self.eval_bar_width = 30
         self.eval_bar_height = self.board_size
@@ -274,8 +293,91 @@ class ChessGUI:
         file = x // self.square_size
         rank = 7 - (y // self.square_size)
         return chess.square(file, rank)
+    
+    def draw_pgn_controls(self):
+        """Draw PGN control buttons and move history."""
+        # Draw buttons
+        for button, text in [
+            (self.save_button, "Save PGN"),
+            (self.load_button, "Load PGN"),
+            (self.prev_button, "← Previous"),
+            (self.next_button, "Next →")
+        ]:
+            pygame.draw.rect(self.screen, (200, 200, 200), button)
+            text_surf = self.font.render(text, True, (0, 0, 0))
+            text_rect = text_surf.get_rect(center=button.center)
+            self.screen.blit(text_surf, text_rect)
+        
+        # Draw move history
+        history_x = self.board_size + 200
+        history_y = 600
+        spacing = 20
+        
+        title = self.font.render("Move History:", True, (0, 0, 0))
+        self.screen.blit(title, (history_x, history_y))
+        
+        # Display last 10 moves
+        start_idx = max(0, len(self.move_history) - 10)
+        for i, move in enumerate(self.move_history[start_idx:]):
+            move_text = f"{start_idx + i + 1}. {move}"
+            color = (0, 128, 0) if i + start_idx == self.current_move_index else (0, 0, 0)
+            text = self.font.render(move_text, True, color)
+            self.screen.blit(text, (history_x, history_y + spacing * (i + 1)))
+    
+    def handle_pgn_button_click(self, pos):
+        """Handle clicks on PGN control buttons."""
+        if self.save_button.collidepoint(pos):
+            filepath = self.pgn_handler.save_game(self.board, {
+                "White": "Human" if self.player_color == chess.WHITE else "Engine",
+                "Black": "Engine" if self.player_color == chess.WHITE else "Human"
+            })
+            print(f"Game saved to: {filepath}")
+            
+        elif self.load_button.collidepoint(pos):
+            # For demo, load the most recent game
+            games = self.pgn_handler.get_all_games()
+            if games:
+                game = self.pgn_handler.load_game(games[-1])
+                if game:
+                    self.load_game(game)
+                    
+        elif self.prev_button.collidepoint(pos):
+            self.navigate_moves(-1)
+            
+        elif self.next_button.collidepoint(pos):
+            self.navigate_moves(1)
+    
+    def load_game(self, game: chess.pgn.Game):
+        """Load a PGN game."""
+        self.board = game.board()
+        self.move_history = []
+        self.current_move_index = 0
+        
+        for move in game.mainline_moves():
+            self.move_history.append(str(move))
+            self.board.push(move)
+            self.current_move_index += 1
+    
+    def navigate_moves(self, direction: int):
+        """Navigate through move history."""
+        target_index = self.current_move_index + direction
+        
+        if 0 <= target_index <= len(self.move_history):
+            # Reset board to starting position
+            self.board = chess.Board()
+            self.current_move_index = 0
+            
+            # Replay moves up to target index
+            for i in range(target_index):
+                move = chess.Move.from_uci(self.move_history[i])
+                self.board.push(move)
+                self.current_move_index = i + 1
 
     def handle_click(self, pos):
+        """Handle mouse clicks."""
+        # Handle PGN button clicks
+        if self.handle_pgn_button_click(pos):
+            return
         if self.game_over or self.ai_thinking or self.board.turn != self.player_color:
             return
 
@@ -409,6 +511,7 @@ class ChessGUI:
         self.draw_eval_bar()
         self.draw_status_info()
         self.draw_game_over()
+        self.draw_pgn_controls()
         pygame.display.flip()
 
 def main():

@@ -4,7 +4,7 @@ import chess.pgn
 import os
 import time
 from datetime import datetime
-from movegeneration import next_move
+from movegeneration import next_move, debug_info
 from evaluate import evaluate_board
 
 class GameSaver:
@@ -55,6 +55,14 @@ class ChessGUI:
         
         # Initialize game saver
         self.game_saver = GameSaver()
+
+        # Add book move tracking
+        self.last_move_from_book = False
+        # Add a font for book move display
+        self.font = pygame.font.SysFont('Arial', 20)
+        # Status text position
+        self.status_x = self.board_size + 50
+        self.status_y = self.height - 200
         
         # Evaluation bar parameters
         self.eval_bar_width = 30
@@ -314,8 +322,11 @@ class ChessGUI:
             current_time = time.time()
             if current_time - self.last_move_time < self.move_delay:
                 return
-
+            # Get debug info before the move to check if it's a book move
+            debug_info.clear()
             move = next_move(3, self.board)
+            # Check if it was a book move
+            self.last_move_from_book = debug_info.get("book_move", False)
             self.board.push(move)
             self.last_move = move
             self.last_move_time = current_time
@@ -365,12 +376,38 @@ class ChessGUI:
         
         return message
     
+    def draw_status_info(self):
+        # Draw existing game info
+        info_x = self.board_size + 150
+        info_y = 50
+        spacing = 30
+
+        # Draw move number
+        move_text = f"Move: {len(self.board.move_stack) // 2 + 1}"
+        text = self.font.render(move_text, True, (0, 0, 0))
+        self.screen.blit(text, (info_x, info_y))
+        
+        # Draw turn indicator
+        turn_text = "White to move" if self.board.turn else "Black to move"
+        text = self.font.render(turn_text, True, (0, 0, 0))
+        self.screen.blit(text, (info_x, info_y + spacing))
+        
+        # Draw last move info with book move indicator
+        if self.last_move:
+            move_source = " (Book Move)" if self.last_move_from_book else ""
+            last_move_text = f"Last move: {self.last_move}{move_source}"
+            # Use a different color for book moves
+            text_color = (0, 128, 0) if self.last_move_from_book else (0, 0, 0)
+            text = self.font.render(last_move_text, True, text_color)
+            self.screen.blit(text, (info_x, info_y + spacing * 2))
+    
     def draw(self):
         self.draw_board()
         self.draw_last_move()
         self.draw_highlights()
         self.draw_pieces()
-        self.draw_eval_bar()  # Added evaluation bar
+        self.draw_eval_bar()
+        self.draw_status_info()
         self.draw_game_over()
         pygame.display.flip()
 

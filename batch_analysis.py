@@ -125,26 +125,70 @@ class BatchEngineMatch:
             'termination': None,
             'total_time': 0,
         }
-    
+        
         start_time = time.time()
         move_count = 0
-    
-        while not board.is_game_over():
+        max_moves = 150
+        move_timeout = 10  # Reduced timeout
+        
+        # Track repeated positions
+        position_count = defaultdict(int)
+        repeated_position_limit = 3
+
+        while not board.is_game_over() and move_count < max_moves:
             move_count += 1
+            move_start_time = time.time()
+            
+            # Check for repeated positions
+            current_pos = board.fen().split(' ')[0]  # Only consider piece positions
+            position_count[current_pos] += 1
+            if position_count[current_pos] >= repeated_position_limit:
+                print(f"Position repeated {repeated_position_limit} times - forcing draw")
+                game_stats['termination'] = "repetition"
+                game_stats['result'] = "1/2-1/2"
+                game_stats['winner'] = "Draw"
+                break
+
             try:
                 is_engine_turn = (board.turn == chess.WHITE) == my_engine_is_white
-            
+                
                 if is_engine_turn:
+                    print(f"Engine thinking... (move {move_count}) Position: {board.fen()}")
                     debug_info.clear()
                     move = next_move(3, board)
                     is_book = debug_info.get("book_move", False)
                     if is_book:
                         game_stats['book_moves'] += 1
+                    print(f"Engine chose move: {move}")
                 else:
-                    result = stockfish.play(board, chess.engine.Limit(time=time_control))
-                    move = result.move
+                    print(f"Stockfish thinking... (move {move_count})")
+                    try:
+                        result = stockfish.play(board, chess.engine.Limit(time=time_control))
+                        move = result.move
+                        print(f"Stockfish chose move: {move}")
+                    except chess.engine.EngineTerminatedError:
+                        print("Stockfish process terminated unexpectedly")
+                        raise
+                    except Exception as e:
+                        print(f"Stockfish error: {str(e)}")
+                        raise
                     is_book = False
-            
+                
+                # Check for timeout
+                if time.time() - move_start_time > move_timeout:
+                    print(f"Move {move_count} timed out")
+                    game_stats['termination'] = "timeout"
+                    game_stats['result'] = "1/2-1/2"
+                    game_stats['winner'] = "Draw"
+                    break
+                
+                if move is None:
+                    print(f"No move returned on move {move_count}")
+                    game_stats['termination'] = "no_move"
+                    game_stats['result'] = "1/2-1/2"
+                    game_stats['winner'] = "Draw"
+                    break
+                    
                 board.push(move)
                 moves.append((move, is_book))
                 game_stats['moves'].append({
@@ -153,54 +197,65 @@ class BatchEngineMatch:
                     'ply': len(board.move_stack),
                     'player': 'MyEngine' if is_engine_turn else 'Stockfish'
                 })
-            
-                # Print move info
-                if move_count % 5 == 0:  # Print every 5 moves to reduce output
-                    print(f"Move {move_count}: {move.uci()}")
+                
+                # Print move info with current evaluation
+                eval_score = evaluate_board(board)
+                print(f"Move {move_count}: {move.uci()} {'(book)' if is_book else ''} [Eval: {eval_score/100:.2f}]")
+                
+                # Add a small delay between moves
+                time.sleep(0.1)
                 
             except Exception as e:
                 print(f"Error on move {move_count}: {str(e)}")
+                print(f"Current position FEN: {board.fen()}")
+                print(f"Legal moves: {list(board.legal_moves)}")
                 raise
-    
+        
         game_stats['total_time'] = time.time() - start_time
         game_stats['num_moves'] = len(moves)
-    
-        # Record game result
-        if board.is_checkmate():
-            white_won = board.turn == chess.BLACK
-            if white_won == my_engine_is_white:
-                winner = "MyEngine"
-                result = "1-0"
+        
+        # Handle game ending
+        if not game_stats.get('result'):  # Only set if not already set by other conditions
+            if board.is_checkmate():
+                white_won = board.turn == chess.BLACK
+                if white_won == my_engine_is_white:
+                    winner = "MyEngine"
+                    result = "1-0"
+                else:
+                    winner = "Stockfish"
+                    result = "0-1"
+                game_stats['termination'] = "checkmate"
+            elif board.is_stalemate():
+                winner = "Draw"
+                result = "1/2-1/2"
+                game_stats['termination'] = "stalemate"
+            elif board.is_insufficient_material():
+                winner = "Draw"
+                result = "1/2-1/2"
+                game_stats['termination'] = "insufficient_material"
             else:
-                winner = "Stockfish"
-                result = "0-1"
-            game_stats['termination'] = "checkmate"
-        elif board.is_stalemate():
-            winner = "Draw"
-            result = "1/2-1/2"
-            game_stats['termination'] = "stalemate"
-        elif board.is_insufficient_material():
-            winner = "Draw"
-            result = "1/2-1/2"
-            game_stats['termination'] = "insufficient_material"
-        else:
-            winner = "Draw"
-            result = "1/2-1/2"
-            game_stats['termination'] = "other"
-    
-        game_stats['winner'] = winner
-        game_stats['result'] = result
-    
+                winner = "Draw"
+                result = "1/2-1/2"
+                game_stats['termination'] = "other"
+                
+            game_stats['winner'] = winner
+            game_stats['result'] = result
+        
         # Update aggregated results
-        self.results['results'].append(result)
+        self.results['results'].append(game_stats['result'])
         self.results['colors'].append('White' if my_engine_is_white else 'Black')
         self.results['terminations'].append(game_stats['termination'])
         self.results['num_moves'].append(game_stats['num_moves'])
         self.results['book_moves'].append(game_stats['book_moves'])
         self.results['total_time'].append(game_stats['total_time'])
-    
+        
+        print(f"\nGame {game_num + 1} completed:")
+        print(f"Result: {game_stats['result']}")
+        print(f"Termination: {game_stats['termination']}")
+        print(f"Moves played: {game_stats['num_moves']}")
+        
         return game_stats
-
+    
     def save_pgn(self, game_stats, timestamp, game_num):
         """Save individual game PGN."""
         # Ensure pgn_games directory exists within engine_analysis

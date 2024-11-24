@@ -6,7 +6,7 @@ from typing import Optional, List, Dict, Any
 import io
 
 class PGNHandler:
-    def __init__(self, directory="pgn_games"):
+    def __init__(self, directory="engine_analysis/pgn_games"):
         """
         Initialize PGN handler with a directory for saved games.
         
@@ -14,6 +14,11 @@ class PGNHandler:
             directory: Directory for saving and loading PGN files
         """
         self.directory = directory
+        # Create parent directory if needed
+        parent_dir = os.path.dirname(directory)
+        if parent_dir and not os.path.exists(parent_dir):
+            os.makedirs(parent_dir)
+        # Create PGN directory
         if not os.path.exists(directory):
             os.makedirs(directory)
             

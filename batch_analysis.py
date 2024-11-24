@@ -54,87 +54,64 @@ class BatchEngineMatch:
         # Store stockfish_elo as instance variable
         self.stockfish_elo = stockfish_elo
     
-        # Configure Stockfish
-        self.stockfish.configure({
-            "UCI_LimitStrength": True,
-            "UCI_Elo": stockfish_elo
-        })
-    
         # Reset statistics
         self.results.clear()
         self.game_data.clear()
     
         print(f"Starting batch of {num_games} games against Stockfish (ELO: {stockfish_elo})")
     
-        # Initialize learning system
-        learner = GameLearner()
-    
-        # Play games
         for game_num in tqdm(range(num_games), desc="Playing games"):
             try:
+                # Reinitialize Stockfish for each game to prevent memory issues
+                STOCKFISH_PATH = "/opt/homebrew/bin/stockfish"
+                stockfish = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
+                stockfish.configure({
+                    "UCI_LimitStrength": True,
+                    "UCI_Elo": stockfish_elo
+                })
+            
                 # Randomly decide who plays white
                 my_engine_is_white = random.choice([True, False])
             
                 # Play the game
-                print(f"\nStarting game {game_num + 1}...")
-                print(f"Playing as {'White' if my_engine_is_white else 'Black'}")
-            
-                game_stats = self.play_single_game(game_num, stockfish_elo, time_control, my_engine_is_white)
+                game_stats = self.play_single_game(game_num, stockfish_elo, time_control, my_engine_is_white, stockfish)
                 self.game_data.append(game_stats)
             
                 # Save PGN after each game
                 self.save_pgn(game_stats, timestamp, game_num)
             
-                # Update progress
-                games_completed = game_num + 1
-                print(f"\nCompleted {games_completed}/{num_games} games")
+                # Close Stockfish process
+                stockfish.quit()
+            
+                # Give system time to clean up
+                time.sleep(0.1)
+            
+                # Print progress
+                print(f"\nCompleted {game_num + 1}/{num_games} games")
                 print(f"Current stats: Wins: {self.results['results'].count('1-0')}, "
                     f"Draws: {self.results['results'].count('1/2-1/2')}, "
                     f"Losses: {self.results['results'].count('0-1')}")
             
             except Exception as e:
                 print(f"Error in game {game_num + 1}: {str(e)}")
+                if 'stockfish' in locals():
+                    stockfish.quit()
                 continue
     
         # Save final statistics
         self.save_statistics(timestamp, stockfish_elo)
     
-        # Learn from the games just played
+        # Learn from the games
         print("\nLearning from played games...")
         integrate_with_batch_analysis(self)
     
-        # Generate and print final summary
-        summary = self.generate_summary()
+        return self.generate_summary()
     
-        print("\nBatch Analysis Complete!")
-        print("=" * 50)
-        print("Final Statistics:")
-        print(f"Total Games: {summary['total_games']}")
-        print("\nOverall Performance:")
-        print(f"Win Rate: {summary['overall']['win_rate']:.1f}%")
-        print(f"Draw Rate: {summary['overall']['draw_rate']:.1f}%")
-        print(f"Loss Rate: {summary['overall']['loss_rate']:.1f}%")
+    def play_single_game(self, game_num, stockfish_elo, time_control, my_engine_is_white, stockfish):
+        """Play a single game and return statistics."""
+        print(f"\nStarting game {game_num + 1}...")
+        print(f"Playing as {'White' if my_engine_is_white else 'Black'}")
     
-        print("\nPerformance as White:")
-        print(f"Games: {summary['as_white']['games']}")
-        print(f"Win Rate: {summary['as_white'].get('win_rate', 0):.1f}%")
-    
-        print("\nPerformance as Black:")
-        print(f"Games: {summary['as_black']['games']}")
-        print(f"Win Rate: {summary['as_black'].get('win_rate', 0):.1f}%")
-    
-        print(f"\nAverage Moves per Game: {summary['avg_moves']:.1f}")
-        print(f"Average Book Moves per Game: {summary['avg_book_moves']:.1f}")
-        print(f"Average Time per Game: {summary['avg_time_per_game']:.1f} seconds")
-    
-        print("\nTermination Types:")
-        for term_type, count in summary['termination_types'].items():
-            print(f"  {term_type}: {count}")
-    
-        return summary
-
-    def play_single_game(self, game_num, stockfish_elo, time_control, my_engine_is_white):
-        print(f"\nStarting game {game_num + 1}...")  # Debug print
         board = chess.Board()
         moves = []
         game_stats = {
@@ -149,40 +126,46 @@ class BatchEngineMatch:
             'total_time': 0,
         }
     
-        print(f"Playing as {'White' if my_engine_is_white else 'Black'}")  # Debug print
         start_time = time.time()
-    
         move_count = 0
+    
         while not board.is_game_over():
             move_count += 1
-            print(f"Move {move_count}")  # Debug print
-            is_engine_turn = (board.turn == chess.WHITE) == my_engine_is_white
-        
-            if is_engine_turn:
-                print("Our engine thinking...")  # Debug print
-                move = next_move(3, board)
-                is_book = debug_info.get("book_move", False)
-                if is_book:
-                    game_stats['book_moves'] += 1
-            else:
-                print("Stockfish thinking...")  # Debug print
-                result = self.stockfish.play(board, chess.engine.Limit(time=time_control))
-                move = result.move
-                is_book = False
+            try:
+                is_engine_turn = (board.turn == chess.WHITE) == my_engine_is_white
             
-            board.push(move)
-            moves.append((move, is_book))
-            game_stats['moves'].append({
-                'move': move.uci(),
-                'is_book': is_book,
-                'ply': len(board.move_stack),
-                'player': 'MyEngine' if is_engine_turn else 'Stockfish'
-            })
-        
+                if is_engine_turn:
+                    debug_info.clear()
+                    move = next_move(3, board)
+                    is_book = debug_info.get("book_move", False)
+                    if is_book:
+                        game_stats['book_moves'] += 1
+                else:
+                    result = stockfish.play(board, chess.engine.Limit(time=time_control))
+                    move = result.move
+                    is_book = False
+            
+                board.push(move)
+                moves.append((move, is_book))
+                game_stats['moves'].append({
+                    'move': move.uci(),
+                    'is_book': is_book,
+                    'ply': len(board.move_stack),
+                    'player': 'MyEngine' if is_engine_turn else 'Stockfish'
+                })
+            
+                # Print move info
+                if move_count % 5 == 0:  # Print every 5 moves to reduce output
+                    print(f"Move {move_count}: {move.uci()}")
+                
+            except Exception as e:
+                print(f"Error on move {move_count}: {str(e)}")
+                raise
+    
         game_stats['total_time'] = time.time() - start_time
         game_stats['num_moves'] = len(moves)
-        
-        # Record game result, adjusting for who played which color
+    
+        # Record game result
         if board.is_checkmate():
             white_won = board.turn == chess.BLACK
             if white_won == my_engine_is_white:
@@ -204,10 +187,10 @@ class BatchEngineMatch:
             winner = "Draw"
             result = "1/2-1/2"
             game_stats['termination'] = "other"
-        
+    
         game_stats['winner'] = winner
         game_stats['result'] = result
-        
+    
         # Update aggregated results
         self.results['results'].append(result)
         self.results['colors'].append('White' if my_engine_is_white else 'Black')
@@ -215,7 +198,7 @@ class BatchEngineMatch:
         self.results['num_moves'].append(game_stats['num_moves'])
         self.results['book_moves'].append(game_stats['book_moves'])
         self.results['total_time'].append(game_stats['total_time'])
-        
+    
         return game_stats
 
     def save_pgn(self, game_stats, timestamp, game_num):

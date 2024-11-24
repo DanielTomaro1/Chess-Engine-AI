@@ -297,51 +297,54 @@ class BatchEngineMatch:
             return True
         return False
     def play_batch(self, num_games, stockfish_elo=1500, time_control=0.1, num_cores=None):
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            self.stockfish_elo = stockfish_elo
-            
-            if num_cores is None:
-                num_cores = multiprocessing.cpu_count() - 1
-            num_cores = min(num_cores, num_games)
-            
-            print(f"\nStarting batch of {num_games} games using {num_cores} cores")
-            
-            # Create batch configurations
-            batch_configs = []
-            games_per_core = num_games // num_cores
-            remaining_games = num_games % num_cores
-            start_game = 0
-            
-            for i in range(num_cores):
-                batch_size = games_per_core + (1 if i < remaining_games else 0)
-                if batch_size > 0:
-                    batch_configs.append((start_game, batch_size, stockfish_elo, time_control))
-                    start_game += batch_size
-            
-            # Run games in parallel
-            with multiprocessing.Pool(num_cores) as pool:
-                all_results = pool.map(run_single_batch, batch_configs)
-            
-            # Combine results
-            self.game_data = [game for batch in all_results for game in batch if game is not None]
-            
-            if self.game_data:
-                # Save statistics and learn from games
-                self.save_statistics(timestamp, stockfish_elo)
-                print("\nLearning from played games...")
-                integrate_with_batch_analysis(self)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.stockfish_elo = stockfish_elo
+        
+        if num_cores is None:
+            num_cores = multiprocessing.cpu_count() - 1
+        num_cores = min(num_cores, num_games)
+        
+        print(f"\nStarting batch of {num_games} games using {num_cores} cores")
+        
+        # Create batch configurations
+        batch_configs = []
+        games_per_core = num_games // num_cores
+        remaining_games = num_games % num_cores
+        start_game = 0
+        
+        for i in range(num_cores):
+            batch_size = games_per_core + (1 if i < remaining_games else 0)
+            if batch_size > 0:
+                batch_configs.append((start_game, batch_size, stockfish_elo, time_control))
+                start_game += batch_size
+        
+        # Run games in parallel
+        with multiprocessing.Pool(num_cores) as pool:
+            all_results = pool.map(run_single_batch, batch_configs)
+        
+        # Combine results
+        self.game_data = [game for batch in all_results for game in batch if game is not None]
+        
+        if self.game_data:
+            # Save PGN files for each game
+            for i, game_stats in enumerate(self.game_data):
+                self.save_pgn(game_stats, timestamp, i)
                 
-                return self.generate_summary()
-            else:
-                print("No games completed successfully")
-                return None         
+            # Save statistics and learn from games
+            self.save_statistics(timestamp, stockfish_elo)
+            print("\nLearning from played games...")
+            integrate_with_batch_analysis(self)
             
+            return self.generate_summary()
+        else:
+            print("No games completed successfully")
+            return None            
     def save_pgn(self, game_stats, timestamp, game_num):
         """Save individual game PGN."""
-        # Ensure pgn_games directory exists within engine_analysis
-        pgn_dir = os.path.join(self.base_dir, "pgn_games")
-        if not os.path.exists(pgn_dir):
-            os.makedirs(pgn_dir)
+        # Just use the already initialized pgn_dir from __init__
+        if not os.path.exists(self.pgn_dir):
+            os.makedirs(self.pgn_dir)
+            
         game = chess.pgn.Game()
         
         # Set headers

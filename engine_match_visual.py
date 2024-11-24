@@ -10,7 +10,7 @@ from evaluate import evaluate_board
 from pgn_handler import PGNHandler
 
 class GameSaver:
-    def __init__(self, save_directory="saved_games"):
+    def __init__(self, save_directory="pgn_games"):
         self.save_directory = save_directory
         if not os.path.exists(save_directory):
             os.makedirs(save_directory)
@@ -53,7 +53,7 @@ class VisualEngineMatch:
         pygame.display.set_caption("Chess Engine Match")
         
         # Initialize PGN handler
-        self.pgn_handler = PGNHandler("stockfish_matches")
+        self.pgn_handler = PGNHandler("pgn_games")
         
         # Board state
         self.board = chess.Board()

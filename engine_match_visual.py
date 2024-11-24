@@ -10,7 +10,8 @@ from evaluate import evaluate_board
 from pgn_handler import PGNHandler
 
 class GameSaver:
-    def __init__(self, save_directory="pgn_games"):
+    def __init__(self, save_directory="engine_analysis/pgn_games"):  # Changed default directory
+        """Initialize GameSaver with a directory for saved games."""
         self.save_directory = save_directory
         if not os.path.exists(save_directory):
             os.makedirs(save_directory)
@@ -51,9 +52,18 @@ class VisualEngineMatch:
         self.square_size = self.board_size // 8
         self.screen = pygame.display.set_mode((width, height))
         pygame.display.set_caption("Chess Engine Match")
-        
-        # Initialize PGN handler
-        self.pgn_handler = PGNHandler("pgn_games")
+    
+        # Create base directory if it doesn't exist
+        self.base_dir = "engine_analysis"
+        if not os.path.exists(self.base_dir):
+            os.makedirs(self.base_dir)
+    
+        # Initialize PGN handler and game saver with correct path
+        pgn_dir = os.path.join(self.base_dir, "pgn_games")
+        if not os.path.exists(pgn_dir):
+            os.makedirs(pgn_dir)
+        self.pgn_handler = PGNHandler(directory=pgn_dir)
+        self.game_saver = GameSaver(save_directory=pgn_dir)
         
         # Board state
         self.board = chess.Board()
@@ -394,6 +404,10 @@ class VisualEngineMatch:
 
         # Save the game if it hasn't been saved yet
         if not self.game_saved:
+            if not hasattr(self, 'game_saver'):
+                pgn_dir = os.path.join(self.base_dir, "pgn_games")
+                self.game_saver = GameSaver(save_directory=pgn_dir)
+            
             saved_path = self.game_saver.save_game(
                 self.board,
                 white_name="MyEngine",

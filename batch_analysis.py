@@ -13,6 +13,8 @@ import random
 from movegeneration import next_move, debug_info
 from evaluate import evaluate_board
 from game_learner import GameLearner
+import multiprocessing
+from functools import partial
 
 def integrate_with_batch_analysis(batch_match):
     """Integrate learning with the batch analysis system."""
@@ -33,78 +35,63 @@ def integrate_with_batch_analysis(batch_match):
     learner.save_experience()
 
 class BatchEngineMatch:
-    def __init__(self, stockfish_path="/opt/homebrew/bin/stockfish"):
-        self.stockfish = chess.engine.SimpleEngine.popen_uci(stockfish_path)
-        self.results = defaultdict(list)
-        self.game_data = []
-        
-        # Ensure directories exist
-        self.base_dir = "engine_analysis"
-        self.pgn_dir = os.path.join(self.base_dir, "pgn_games")
-        self.stats_dir = os.path.join(self.base_dir, "statistics")
-        
-        for directory in [self.base_dir, self.pgn_dir, self.stats_dir]:
-            if not os.path.exists(directory):
-                os.makedirs(directory)
-
-    def play_batch(self, num_games, stockfish_elo=1500, time_control=1.0):
-        """Play multiple games and collect statistics."""
+    def play_batch(self, num_games, stockfish_elo=1500, time_control=0.1, num_cores=None):
+        """Play multiple games in parallel."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-        # Store stockfish_elo as instance variable
         self.stockfish_elo = stockfish_elo
-    
-        # Reset statistics
-        self.results.clear()
-        self.game_data.clear()
-    
-        print(f"Starting batch of {num_games} games against Stockfish (ELO: {stockfish_elo})")
-    
-        for game_num in tqdm(range(num_games), desc="Playing games"):
-            try:
-                # Reinitialize Stockfish for each game to prevent memory issues
-                STOCKFISH_PATH = "/opt/homebrew/bin/stockfish"
-                stockfish = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
-                stockfish.configure({
-                    "UCI_LimitStrength": True,
-                    "UCI_Elo": stockfish_elo
-                })
+        
+        if num_cores is None:
+            num_cores = multiprocessing.cpu_count() - 1
+        
+        # Calculate games per core
+        games_per_core = num_games // num_cores
+        remaining_games = num_games % num_cores
+        
+        # Create game batches
+        game_batches = []
+        start_game = 0
+        for i in range(num_cores):
+            batch_size = games_per_core + (1 if i < remaining_games else 0)
+            if batch_size > 0:
+                game_batches.append((start_game, batch_size))
+                start_game += batch_size
+        
+        # Function to run a batch of games
+        def run_game_batch(start_game, batch_size):
+            stockfish = chess.engine.SimpleEngine.popen_uci("/opt/homebrew/bin/stockfish")
+            stockfish.configure({
+                "UCI_LimitStrength": True,
+                "UCI_Elo": stockfish_elo
+            })
             
-                # Randomly decide who plays white
-                my_engine_is_white = random.choice([True, False])
+            batch_results = []
+            for game_num in range(start_game, start_game + batch_size):
+                try:
+                    my_engine_is_white = random.choice([True, False])
+                    game_stats = self.play_single_game(
+                        game_num, stockfish_elo, time_control, 
+                        my_engine_is_white, stockfish
+                    )
+                    batch_results.append(game_stats)
+                    print(f"Completed game {game_num + 1}/{num_games}")
+                except Exception as e:
+                    print(f"Error in game {game_num + 1}: {str(e)}")
             
-                # Play the game
-                game_stats = self.play_single_game(game_num, stockfish_elo, time_control, my_engine_is_white, stockfish)
-                self.game_data.append(game_stats)
-            
-                # Save PGN after each game
-                self.save_pgn(game_stats, timestamp, game_num)
-            
-                # Close Stockfish process
-                stockfish.quit()
-            
-                # Give system time to clean up
-                time.sleep(0.1)
-            
-                # Print progress
-                print(f"\nCompleted {game_num + 1}/{num_games} games")
-                print(f"Current stats: Wins: {self.results['results'].count('1-0')}, "
-                    f"Draws: {self.results['results'].count('1/2-1/2')}, "
-                    f"Losses: {self.results['results'].count('0-1')}")
-            
-            except Exception as e:
-                print(f"Error in game {game_num + 1}: {str(e)}")
-                if 'stockfish' in locals():
-                    stockfish.quit()
-                continue
-    
-        # Save final statistics
+            stockfish.quit()
+            return batch_results
+        
+        # Run games in parallel
+        with multiprocessing.Pool(num_cores) as pool:
+            all_results = pool.starmap(run_game_batch, game_batches)
+        
+        # Combine results
+        self.game_data = [game for batch in all_results for game in batch]
+        
+        # Save statistics and learn from games
         self.save_statistics(timestamp, stockfish_elo)
-    
-        # Learn from the games
         print("\nLearning from played games...")
         integrate_with_batch_analysis(self)
-    
+        
         return self.generate_summary()
     
     def play_single_game(self, game_num, stockfish_elo, time_control, my_engine_is_white, stockfish):
@@ -155,7 +142,7 @@ class BatchEngineMatch:
                 if is_engine_turn:
                     print(f"Engine thinking... (move {move_count}) Position: {board.fen()}")
                     debug_info.clear()
-                    move = next_move(3, board)
+                    move = next_move(2, board)
                     is_book = debug_info.get("book_move", False)
                     if is_book:
                         game_stats['book_moves'] += 1
@@ -255,6 +242,34 @@ class BatchEngineMatch:
         print(f"Moves played: {game_stats['num_moves']}")
         
         return game_stats
+    
+    # Add mercy rule - end game if material difference is too large
+    def material_difference_too_large(board):
+        return abs(evaluate_board(board)) > 1500  # 15 pawns worth
+    
+    # Add draw conditions
+    def is_likely_draw(board):
+        # Only kings left
+        if len(list(board.pieces(chess.PAWN, chess.WHITE))) == 0 and \
+           len(list(board.pieces(chess.PAWN, chess.BLACK))) == 0 and \
+           len(list(board.pieces(chess.ROOK, chess.WHITE))) == 0 and \
+           len(list(board.pieces(chess.ROOK, chess.BLACK))) == 0 and \
+           len(list(board.pieces(chess.QUEEN, chess.WHITE))) == 0 and \
+           len(list(board.pieces(chess.QUEEN, chess.BLACK))) == 0:
+            return True
+        return False
+    
+    while not board.is_game_over():
+        # Add early stopping conditions
+        if material_difference_too_large(board):
+            game_stats['termination'] = "mercy_rule"
+            game_stats['result'] = "1-0" if evaluate_board(board) > 0 else "0-1"
+            break
+            
+        if is_likely_draw(board):
+            game_stats['termination'] = "likely_draw"
+            game_stats['result'] = "1/2-1/2"
+            break
     
     def save_pgn(self, game_stats, timestamp, game_num):
         """Save individual game PGN."""
@@ -397,15 +412,27 @@ class BatchEngineMatch:
 def main():
     print("Batch Chess Engine Analysis")
     print("=" * 50)
-    
+
     # Get parameters from user
-    num_games = int(input("Enter number of games to play: "))
-    elo = int(input("Enter Stockfish ELO (1000-3000): "))
-    
+    while True:
+        try:
+            num_games = int(input("Enter number of games to play: "))
+            elo = int(input("Enter Stockfish ELO (1000-3000): "))
+            if 1000 <= elo <= 3000:
+                break
+            print("Please enter an ELO between 1000 and 3000")
+        except ValueError:
+            print("Please enter valid numbers")
+
+    # Get number of cores for parallel processing
+    num_cores = multiprocessing.cpu_count() - 1
+    num_cores = min(num_cores, num_games)  # Don't use more cores than games
+    print(f"\nUsing {num_cores} cores for parallel processing")
+
     # Create and run batch analysis
     batch = BatchEngineMatch()
     try:
-        summary = batch.play_batch(num_games, stockfish_elo=elo)
+        summary = batch.play_batch(num_games, stockfish_elo=elo, num_cores=num_cores)
         
         print("\nAnalysis Complete!")
         print("=" * 50)
@@ -434,9 +461,24 @@ def main():
         print("\nTermination Types:")
         for term_type, count in summary['termination_types'].items():
             print(f"  {term_type}: {count}")
+
+    except KeyboardInterrupt:
+        print("\nBatch analysis interrupted!")
+        print("Saving partial results...")
+        summary = batch.generate_summary()
+        # Print available statistics...
+        
+    except Exception as e:
+        print(f"\nError during batch analysis: {str(e)}")
         
     finally:
         batch.close()
+        print("\nAnalysis session ended.")
 
+if __name__ == "__main__":
+    # Import at top of file
+    import multiprocessing
+    multiprocessing.freeze_support()  # For Windows compatibility
+    main()
 if __name__ == "__main__":
     main()

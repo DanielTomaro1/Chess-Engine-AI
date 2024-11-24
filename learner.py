@@ -6,7 +6,12 @@ from collections import defaultdict
 import datetime
 
 class GameLearner:
-    def __init__(self, experience_file="learned_positions.json"):
+    def __init__(self, experience_file="engine_analysis/learned_positions.json"):
+        # Create base directory if it doesn't exist
+        base_dir = "engine_analysis"
+        if not os.path.exists(base_dir):
+            os.makedirs(base_dir)
+            
         self.positions = defaultdict(list)
         self.experience_file = experience_file
         self.load_experience()
@@ -111,11 +116,12 @@ def integrate_with_batch_analysis(batch_match):
     """
     learner = GameLearner()
     
-    # Learn from newly played games
+    # Learn from newly played games in the correct directory
+    pgn_dir = "engine_analysis/pgn_games"
     print("\nLearning from new games...")
-    learner.learn_from_directory("pgn_games")
+    learner.learn_from_directory(pgn_dir)
     
-    # Get and display statistics
+    # Rest remains the same...
     stats = learner.get_statistics()
     print("\nLearning Statistics:")
     print(f"Total positions learned: {stats['total_positions']}")
@@ -124,7 +130,6 @@ def integrate_with_batch_analysis(batch_match):
     print(f"New positions learned: {stats['positions_learned']}")
     print(f"Average moves per position: {stats['average_moves_per_position']:.2f}")
     
-    # Save the updated experience
     learner.save_experience()
 
 def main():
@@ -134,17 +139,11 @@ def main():
     print("Chess Game Learning System")
     print("=" * 50)
     
-    # Learn from Stockfish matches
-    print("\nLearning from Stockfish matches...")
-    learner.learn_from_directory("stockfish_matches")
+    base_dir = "engine_analysis"
     
-    # Learn from saved games
-    print("\nLearning from saved games...")
-    learner.learn_from_directory("saved_games")
-    
-    # Learn from PGN games
+    # Learn from games in the correct directories
     print("\nLearning from PGN games...")
-    learner.learn_from_directory("pgn_games")
+    learner.learn_from_directory(os.path.join(base_dir, "pgn_games"))
     
     # Save learned positions
     learner.save_experience()

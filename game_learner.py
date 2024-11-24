@@ -200,15 +200,13 @@ class GameLearner:
         total_positions = len(self.positions)
         total_moves = 0
         for position_data in self.positions.values():
-            # Assuming position_data is a list of PositionData objects
             total_moves += len(position_data)
     
         return {
             'total_positions': total_positions,
             'total_moves': total_moves,
-            'games_processed': self.games_processed,
-            'positions_learned': len([pos for pos in self.positions.values() if pos]),
-            'average_moves_per_position': total_moves / total_positions if total_positions > 0 else 0
+            'average_moves_per_position': total_moves / total_positions if total_positions > 0 else 0,
+            'positions_learned': len([pos for pos in self.positions.values() if pos])
         }
 
     def get_position_stats(self, board: chess.Board) -> List[Dict]:

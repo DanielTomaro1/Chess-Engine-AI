@@ -9,7 +9,7 @@ from evaluate import evaluate_board
 from pgn_handler import PGNHandler
 
 class GameSaver:
-    def __init__(self, save_directory="saved_games"):
+    def __init__(self, save_directory="pgn_games"):
         """Initialize GameSaver with a directory for saved games."""
         self.save_directory = save_directory
         if not os.path.exists(save_directory):

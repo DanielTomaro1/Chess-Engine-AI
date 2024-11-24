@@ -237,23 +237,44 @@ class BatchEngineMatch:
 
     def save_statistics(self, timestamp, stockfish_elo):
         """Save comprehensive statistics to JSON and CSV."""
+        def convert_to_serializable(obj):
+            """Convert numpy numbers to Python native types."""
+            if hasattr(obj, 'tolist'):  # For numpy arrays
+                return obj.tolist()
+            elif hasattr(obj, 'item'):  # For numpy scalars
+                return obj.item()
+            return obj
+
         stats = {
             'timestamp': timestamp,
             'stockfish_elo': stockfish_elo,
             'num_games': len(self.game_data),
-            'summary': self.generate_summary(),
-            'game_data': self.game_data
+            'summary': {
+                k: convert_to_serializable(v) if isinstance(v, (dict, list)) 
+                else convert_to_serializable(v) 
+                for k, v in self.generate_summary().items()
+            },
+            'game_data': [
+                {k: convert_to_serializable(v) for k, v in game.items()}
+                for game in self.game_data
+            ]
         }
-        
+    
         # Save detailed JSON
         json_path = os.path.join(self.stats_dir, f"stats_{timestamp}.json")
-        with open(json_path, "w") as f:
-            json.dump(stats, f, indent=2)
-        
+        try:
+            with open(json_path, "w") as f:
+                json.dump(stats, f, indent=2)
+        except Exception as e:
+            print(f"Error saving JSON statistics: {e}")
+    
         # Save CSV summary
-        df = pd.DataFrame(self.game_data)
-        csv_path = os.path.join(self.stats_dir, f"summary_{timestamp}.csv")
-        df.to_csv(csv_path, index=False)
+        try:
+            df = pd.DataFrame(self.game_data)
+            csv_path = os.path.join(self.stats_dir, f"summary_{timestamp}.csv")
+            df.to_csv(csv_path, index=False)
+        except Exception as e:
+            print(f"Error saving CSV summary: {e}")
 
     def generate_summary(self):
         """Generate summary statistics."""

@@ -7,11 +7,30 @@ from datetime import datetime
 import json
 from collections import defaultdict
 import pandas as pd
+import numpy as np
 from tqdm import tqdm
 import random
 from movegeneration import next_move, debug_info
 from evaluate import evaluate_board
 from game_learner import GameLearner
+
+def integrate_with_batch_analysis(batch_match):
+    """Integrate learning with the batch analysis system."""
+    learner = GameLearner(experience_file="engine_analysis/learned_positions.json")
+    
+    print("\nLearning from played games...")
+    learner.learn_from_directory("engine_analysis/pgn_games")
+    
+    # Get and display statistics
+    stats = learner.get_statistics()
+    
+    print("\nLearning Statistics:")
+    print(f"Total positions learned: {stats['total_positions']}")
+    print(f"Total moves stored: {stats['total_moves']}")
+    print(f"Average moves per position: {stats['average_moves_per_position']:.2f}")
+    
+    # Save the updated experience
+    learner.save_experience()
 
 class BatchEngineMatch:
     def __init__(self, stockfish_path="/opt/homebrew/bin/stockfish"):
@@ -201,6 +220,10 @@ class BatchEngineMatch:
 
     def save_pgn(self, game_stats, timestamp, game_num):
         """Save individual game PGN."""
+        # Ensure pgn_games directory exists within engine_analysis
+        pgn_dir = os.path.join(self.base_dir, "pgn_games")
+        if not os.path.exists(pgn_dir):
+            os.makedirs(pgn_dir)
         game = chess.pgn.Game()
         
         # Set headers
@@ -237,44 +260,42 @@ class BatchEngineMatch:
 
     def save_statistics(self, timestamp, stockfish_elo):
         """Save comprehensive statistics to JSON and CSV."""
-        def convert_to_serializable(obj):
-            """Convert numpy numbers to Python native types."""
-            if hasattr(obj, 'tolist'):  # For numpy arrays
+        def convert_numpy(obj):
+            if isinstance(obj, np.integer):
+                return int(obj)
+            elif isinstance(obj, np.floating):
+                return float(obj)
+            elif isinstance(obj, np.ndarray):
                 return obj.tolist()
-            elif hasattr(obj, 'item'):  # For numpy scalars
-                return obj.item()
+            elif isinstance(obj, dict):
+                return {k: convert_numpy(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_numpy(item) for item in obj]
             return obj
 
         stats = {
             'timestamp': timestamp,
             'stockfish_elo': stockfish_elo,
             'num_games': len(self.game_data),
-            'summary': {
-                k: convert_to_serializable(v) if isinstance(v, (dict, list)) 
-                else convert_to_serializable(v) 
-                for k, v in self.generate_summary().items()
-            },
-            'game_data': [
-                {k: convert_to_serializable(v) for k, v in game.items()}
-                for game in self.game_data
-            ]
+            'summary': convert_numpy(self.generate_summary()),
+            'game_data': convert_numpy(self.game_data)
         }
-    
-        # Save detailed JSON
-        json_path = os.path.join(self.stats_dir, f"stats_{timestamp}.json")
+        
         try:
+            # Save detailed JSON
+            json_path = os.path.join(self.stats_dir, f"stats_{timestamp}.json")
             with open(json_path, "w") as f:
                 json.dump(stats, f, indent=2)
-        except Exception as e:
-            print(f"Error saving JSON statistics: {e}")
-    
-        # Save CSV summary
-        try:
+            print(f"\nStatistics saved to: {json_path}")
+            
+            # Save CSV summary
             df = pd.DataFrame(self.game_data)
             csv_path = os.path.join(self.stats_dir, f"summary_{timestamp}.csv")
             df.to_csv(csv_path, index=False)
+            print(f"Summary saved to: {csv_path}")
+            
         except Exception as e:
-            print(f"Error saving CSV summary: {e}")
+            print(f"Error saving statistics: {str(e)}")
 
     def generate_summary(self):
         """Generate summary statistics."""

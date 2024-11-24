@@ -6,7 +6,7 @@ from typing import Optional, List, Dict, Any
 import io
 
 class PGNHandler:
-    def __init__(self, directory="saved_games"):
+    def __init__(self, directory="pgn_games"):
         """
         Initialize PGN handler with a directory for saved games.
         

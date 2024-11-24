@@ -9,7 +9,7 @@ from evaluate import evaluate_board
 from pgn_handler import PGNHandler
 
 class GameSaver:
-    def __init__(self, save_directory="pgn_games"):
+    def __init__(self, save_directory="engine_analysis/pgn_games"):
         """Initialize GameSaver with a directory for saved games."""
         self.save_directory = save_directory
         if not os.path.exists(save_directory):
@@ -53,6 +53,18 @@ class ChessGUI:
         self.square_size = self.board_size // 8
         self.screen = pygame.display.set_mode((width, height))
         pygame.display.set_caption("Chess Engine")
+
+        # Create base directory if it doesn't exist
+        self.base_dir = "engine_analysis"
+        if not os.path.exists(self.base_dir):
+            os.makedirs(self.base_dir)
+        
+        # Initialize game saver with correct path
+        pgn_dir = os.path.join(self.base_dir, "pgn_games")
+        self.game_saver = GameSaver(save_directory=pgn_dir)
+
+        # Initialize PGN handler with correct path
+        self.pgn_handler = PGNHandler(directory=pgn_dir)
         
         # Initialize game saver
         self.game_saver = GameSaver()

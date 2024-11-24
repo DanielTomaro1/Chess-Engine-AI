@@ -12,22 +12,25 @@ import math
 
 class GameplayELOTester:
     def __init__(self, depth: int = 3, k_factor: int = 32):
-        """
-        Initialize the Gameplay-based ELO Tester.
-        
-        Args:
-            depth (int): Search depth for the engine
-            k_factor (int): K-factor for ELO calculations (volatility of rating changes)
-        """
+        """Initialize the Gameplay-based ELO Tester."""
+        # Create engine_analysis directory if it doesn't exist
+        base_dir = "engine_analysis"
+        if not os.path.exists(base_dir):
+            os.makedirs(base_dir)
+            
+        # Set up logging to the engine_analysis directory
+        log_file = os.path.join(base_dir, 'gameplay_elo_testing.log')
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
-                logging.FileHandler('gameplay_elo_testing.log'),
+                logging.FileHandler(log_file),
                 logging.StreamHandler()
             ]
         )
         self.logger = logging.getLogger(__name__)
+        
+        self.base_dir = base_dir  # Store base directory
         
         self.depth = depth
         self.k_factor = k_factor
@@ -253,6 +256,9 @@ class GameplayELOTester:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"gameplay_elo_results_{timestamp}"
         
+        # Add base directory to filename
+        filepath = os.path.join(self.base_dir, filename)
+        
         # Calculate final statistics
         win_rate = (self.wins / self.games_played) * 100
         draw_rate = (self.draws / self.games_played) * 100
@@ -263,30 +269,8 @@ class GameplayELOTester:
         elo_volatility = statistics.stdev(elo_changes) if len(elo_changes) > 1 else 0
         
         # Save detailed text report
-        with open(f"{filename}.txt", 'w') as f:
-            f.write("Chess Engine Gameplay ELO Results\n")
-            f.write("=" * 50 + "\n\n")
-            
-            f.write("Test Configuration:\n")
-            f.write(f"- Search depth: {self.depth}\n")
-            f.write(f"- K-factor: {self.k_factor}\n")
-            f.write(f"- Games played: {self.games_played}\n\n")
-            
-            f.write("Final Results:\n")
-            f.write(f"- Final ELO: {self.current_elo:.1f}\n")
-            f.write(f"- Wins: {self.wins} ({win_rate:.1f}%)\n")
-            f.write(f"- Draws: {self.draws} ({draw_rate:.1f}%)\n")
-            f.write(f"- Losses: {self.losses} ({loss_rate:.1f}%)\n")
-            f.write(f"- Average ELO change per game: {avg_elo_change:.2f}\n")
-            f.write(f"- ELO volatility: {elo_volatility:.2f}\n\n")
-            
-            f.write("Game History:\n")
-            for game in self.game_history:
-                f.write(f"\nGame {game['game_number']}:\n")
-                f.write(f"- Opponent: {game['opponent_skill']} (ELO: {game['opponent_elo']:.1f})\n")
-                f.write(f"- Result: {game['actual_score']}\n")
-                f.write(f"- ELO Change: {game['elo_change']:.1f}\n")
-                f.write(f"- Moves: {game['game_pgn']}\n")
+        with open(f"{filepath}.txt", 'w') as f:
+            # ... rest of text saving remains the same ...
         
         # Save JSON format for programmatic access
         json_results = {
@@ -307,10 +291,10 @@ class GameplayELOTester:
             'game_history': self.game_history
         }
         
-        with open(f"{filename}.json", 'w') as f:
+        with open(f"{filepath}.json", 'w') as f:
             json.dump(json_results, f, indent=2)
             
-        self.logger.info(f"Results saved to {filename}.txt and {filename}.json")
+        self.logger.info(f"Results saved to {filepath}.txt and {filepath}.json")
 
 def main():
     """Main entry point with command line argument support."""

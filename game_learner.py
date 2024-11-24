@@ -17,14 +17,19 @@ class PositionData:
     avg_eval: float     # Average evaluation after this move
     is_book: bool       # Whether it was a book move
 
+
 class GameLearner:
-    def __init__(self, experience_file: str = "learned_positions.json"):
+    def __init__(self, experience_file: str = "engine_analysis/learned_positions.json"):
         """
         Initialize the learning system.
         
         Args:
             experience_file: File to store learned positions
         """
+        # Create engine_analysis directory if it doesn't exist
+        base_dir = Path("engine_analysis")
+        base_dir.mkdir(exist_ok=True)
+        
         self.experience_file = experience_file
         self.positions: Dict[str, List[PositionData]] = defaultdict(list)
         self.load_experience()
@@ -43,6 +48,23 @@ class GameLearner:
             except Exception as e:
                 print(f"Error loading experience file: {e}")
                 self.positions = defaultdict(list)
+        else:
+            # Create parent directory if it doesn't exist
+            os.makedirs(os.path.dirname(self.experience_file), exist_ok=True)
+
+    def get_statistics(self) -> dict:
+        """Get learning statistics."""
+        total_positions = len(self.positions)
+        total_moves = sum(len(moves) for moves in self.positions.values())
+    
+        return {
+            'total_positions': total_positions,
+            'total_moves': total_moves,
+            'moves_per_position': total_moves / total_positions if total_positions > 0 else 0,
+            'positions_learned': len([pos for pos in self.positions.values() if len(pos) > 0]),
+            'average_moves_per_position': total_moves / total_positions if total_positions > 0 else 0
+        }
+
 
     def save_experience(self):
         """Save learned positions to file."""
@@ -126,20 +148,25 @@ class GameLearner:
         except Exception as e:
             print(f"Error learning from game {pgn_file}: {e}")
 
-    def learn_from_directory(self, directory: str):
+    def learn_from_directory(self, directory: str = "engine_analysis/pgn_games"):
         """
         Learn from all PGN files in a directory.
         
         Args:
-            directory: Directory containing PGN files
+            directory: Directory containing PGN files, defaults to engine_analysis/pgn_games
         """
         start_time = time.time()
         num_games = 0
         
-        for file in os.listdir(directory):
-            if file.endswith('.pgn'):
-                self.learn_from_game(os.path.join(directory, file))
-                num_games += 1
+        # Ensure directory exists
+        directory_path = Path(directory)
+        if not directory_path.exists():
+            print(f"Directory {directory} does not exist")
+            return
+            
+        for file in directory_path.glob('*.pgn'):
+            self.learn_from_game(str(file))
+            num_games += 1
         
         self.save_experience()
         

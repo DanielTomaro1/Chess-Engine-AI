@@ -33,9 +33,11 @@ def integrate_with_batch_analysis(batch_match):
     
     # Save the updated experience
     learner.save_experience()
-def run_single_batch(batch_config):
-    """Standalone function to run a batch of games."""
-    start_game, batch_size, stockfish_elo, time_control = batch_config
+
+def run_single_batch(config):
+    start_game, batch_size, stockfish_elo, time_control = config
+    
+    # Initialize stockfish
     stockfish = chess.engine.SimpleEngine.popen_uci("/opt/homebrew/bin/stockfish")
     stockfish.configure({
         "UCI_LimitStrength": True,
@@ -43,112 +45,29 @@ def run_single_batch(batch_config):
     })
     
     batch_results = []
-    for game_num in range(start_game, start_game + batch_size):
-        try:
-            my_engine_is_white = random.choice([True, False])
-            board = chess.Board()
-            game_stats = play_game(game_num, stockfish_elo, time_control, 
-                                 my_engine_is_white, stockfish, board)
-            batch_results.append(game_stats)
-            print(f"Completed game {game_num + 1}")
-        except Exception as e:
-            print(f"Error in game {game_num + 1}: {str(e)}")
-    
-    stockfish.quit()
-    return batch_results
-
-class BatchEngineMatch:
-    def __init__(self, stockfish_path="/opt/homebrew/bin/stockfish"):
-        self.stockfish = chess.engine.SimpleEngine.popen_uci(stockfish_path)
-        self.results = defaultdict(list)
-        self.game_data = []
-        
-        # Create base directory structure
-        self.base_dir = "engine_analysis"
-        self.pgn_dir = os.path.join(self.base_dir, "pgn_games")
-        self.stats_dir = os.path.join(self.base_dir, "statistics")
-        
-        for directory in [self.base_dir, self.pgn_dir, self.stats_dir]:
-            if not os.path.exists(directory):
-                os.makedirs(directory)
-    def run_game_batch(self, start_game, batch_size, stockfish_elo, time_control):
-        """Run a batch of games."""
-        stockfish = chess.engine.SimpleEngine.popen_uci("/opt/homebrew/bin/stockfish")
-        stockfish.configure({
-            "UCI_LimitStrength": True,
-            "UCI_Elo": stockfish_elo
-        })
-        
-        batch_results = []
+    try:
         for game_num in range(start_game, start_game + batch_size):
             try:
                 my_engine_is_white = random.choice([True, False])
-                game_stats = self.play_single_game(
-                    game_num, stockfish_elo, time_control, 
-                    my_engine_is_white, stockfish
+                board = chess.Board()
+                game_stats = play_game(
+                    game_num, 
+                    stockfish_elo, 
+                    time_control,
+                    my_engine_is_white,
+                    stockfish,
+                    board
                 )
                 batch_results.append(game_stats)
                 print(f"Completed game {game_num + 1}")
             except Exception as e:
                 print(f"Error in game {game_num + 1}: {str(e)}")
-        
+    finally:
         stockfish.quit()
-        return batch_results
-
-    def material_difference_too_large(self, board):
-        """Check if material difference is too large."""
-        return abs(evaluate_board(board)) > 1500  # 15 pawns worth
     
-    def is_likely_draw(self, board):
-        """Check for likely draw conditions."""
-        # Only kings left
-        if (len(list(board.pieces(chess.PAWN, chess.WHITE))) == 0 and 
-            len(list(board.pieces(chess.PAWN, chess.BLACK))) == 0 and 
-            len(list(board.pieces(chess.ROOK, chess.WHITE))) == 0 and 
-            len(list(board.pieces(chess.ROOK, chess.BLACK))) == 0 and 
-            len(list(board.pieces(chess.QUEEN, chess.WHITE))) == 0 and 
-            len(list(board.pieces(chess.QUEEN, chess.BLACK))) == 0):
-            return True
-        return False
-    def play_batch(self, num_games, stockfish_elo=1500, time_control=0.1, num_cores=None):
-        """Play multiple games in parallel."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.stockfish_elo = stockfish_elo
-        
-        if num_cores is None:
-            num_cores = multiprocessing.cpu_count() - 1
-        num_cores = min(num_cores, num_games)
-        
-        print(f"Starting batch of {num_games} games using {num_cores} cores")
-        
-        # Create batch configurations
-        batch_configs = []
-        games_per_core = num_games // num_cores
-        remaining_games = num_games % num_cores
-        start_game = 0
-        
-        for i in range(num_cores):
-            batch_size = games_per_core + (1 if i < remaining_games else 0)
-            if batch_size > 0:
-                batch_configs.append((start_game, batch_size, stockfish_elo, time_control))
-                start_game += batch_size
-        
-        # Run games in parallel using the standalone function
-        with multiprocessing.Pool(num_cores) as pool:
-            all_results = pool.map(run_single_batch, batch_configs)
-        
-        # Combine results
-        self.game_data = [game for batch in all_results for game in batch]
-        
-        # Save statistics and learn from games
-        self.save_statistics(timestamp, stockfish_elo)
-        print("\nLearning from played games...")
-        integrate_with_batch_analysis(self)
-        
-        return self.generate_summary()   
-         
-    def play_game(game_num, stockfish_elo, time_control, my_engine_is_white, stockfish, board):
-        """Standalone function to play a single game."""
+    return batch_results
+
+def play_game(game_num, stockfish_elo, time_control, my_engine_is_white, stockfish, board):       
         print(f"\nStarting game {game_num + 1}...")
         print(f"Playing as {'White' if my_engine_is_white else 'Black'}")
         
@@ -312,6 +231,111 @@ class BatchEngineMatch:
         print(f"Moves played: {game_stats['num_moves']}")
         
         return game_stats    
+
+class BatchEngineMatch:
+    def __init__(self):
+        # Create base directory structure
+        self.base_dir = "engine_analysis"
+        self.pgn_dir = os.path.join(self.base_dir, "pgn_games")
+        self.stats_dir = os.path.join(self.base_dir, "statistics")
+        
+        for directory in [self.base_dir, self.pgn_dir, self.stats_dir]:
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+                
+        self.results = defaultdict(list)
+        self.game_data = []
+        self.stockfish = None  # Initialize stockfish as None
+    
+    def close(self):
+        """Clean up resources."""
+        # Only try to quit if stockfish exists and is running
+        try:
+            if hasattr(self, 'stockfish') and self.stockfish is not None:
+                self.stockfish.quit()
+        except Exception as e:
+            print(f"Error closing stockfish: {e}")
+
+        
+    def run_game_batch(self, start_game, batch_size, stockfish_elo, time_control):
+        """Run a batch of games."""
+        stockfish = chess.engine.SimpleEngine.popen_uci("/opt/homebrew/bin/stockfish")
+        stockfish.configure({
+            "UCI_LimitStrength": True,
+            "UCI_Elo": stockfish_elo
+        })
+        
+        batch_results = []
+        for game_num in range(start_game, start_game + batch_size):
+            try:
+                my_engine_is_white = random.choice([True, False])
+                game_stats = self.play_single_game(
+                    game_num, stockfish_elo, time_control, 
+                    my_engine_is_white, stockfish
+                )
+                batch_results.append(game_stats)
+                print(f"Completed game {game_num + 1}")
+            except Exception as e:
+                print(f"Error in game {game_num + 1}: {str(e)}")
+        
+        stockfish.quit()
+        return batch_results
+
+    def material_difference_too_large(self, board):
+        """Check if material difference is too large."""
+        return abs(evaluate_board(board)) > 1500  # 15 pawns worth
+    
+    def is_likely_draw(self, board):
+        """Check for likely draw conditions."""
+        # Only kings left
+        if (len(list(board.pieces(chess.PAWN, chess.WHITE))) == 0 and 
+            len(list(board.pieces(chess.PAWN, chess.BLACK))) == 0 and 
+            len(list(board.pieces(chess.ROOK, chess.WHITE))) == 0 and 
+            len(list(board.pieces(chess.ROOK, chess.BLACK))) == 0 and 
+            len(list(board.pieces(chess.QUEEN, chess.WHITE))) == 0 and 
+            len(list(board.pieces(chess.QUEEN, chess.BLACK))) == 0):
+            return True
+        return False
+    def play_batch(self, num_games, stockfish_elo=1500, time_control=0.1, num_cores=None):
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.stockfish_elo = stockfish_elo
+            
+            if num_cores is None:
+                num_cores = multiprocessing.cpu_count() - 1
+            num_cores = min(num_cores, num_games)
+            
+            print(f"\nStarting batch of {num_games} games using {num_cores} cores")
+            
+            # Create batch configurations
+            batch_configs = []
+            games_per_core = num_games // num_cores
+            remaining_games = num_games % num_cores
+            start_game = 0
+            
+            for i in range(num_cores):
+                batch_size = games_per_core + (1 if i < remaining_games else 0)
+                if batch_size > 0:
+                    batch_configs.append((start_game, batch_size, stockfish_elo, time_control))
+                    start_game += batch_size
+            
+            # Run games in parallel
+            with multiprocessing.Pool(num_cores) as pool:
+                all_results = pool.map(run_single_batch, batch_configs)
+            
+            # Combine results
+            self.game_data = [game for batch in all_results for game in batch if game is not None]
+            
+            if self.game_data:
+                # Save statistics and learn from games
+                self.save_statistics(timestamp, stockfish_elo)
+                print("\nLearning from played games...")
+                integrate_with_batch_analysis(self)
+                
+                return self.generate_summary()
+            else:
+                print("No games completed successfully")
+                return None         
+            
     def save_pgn(self, game_stats, timestamp, game_num):
         """Save individual game PGN."""
         # Ensure pgn_games directory exists within engine_analysis
@@ -390,65 +414,87 @@ class BatchEngineMatch:
             
         except Exception as e:
             print(f"Error saving statistics: {str(e)}")
-
     def generate_summary(self):
         """Generate summary statistics."""
-        total_games = len(self.results['results'])
-        if total_games == 0:
-            return "No games played"
+        # Check if there's any data
+        if not self.game_data:
+            return None
         
-        wins = self.results['results'].count("1-0")
-        losses = self.results['results'].count("0-1")
-        draws = self.results['results'].count("1/2-1/2")
-        
-        # Split statistics by color
-        white_games = [i for i, color in enumerate(self.results['colors']) if color == 'White']
-        black_games = [i for i, color in enumerate(self.results['colors']) if color == 'Black']
-        
-        white_results = [self.results['results'][i] for i in white_games]
-        black_results = [self.results['results'][i] for i in black_games]
-        
-        summary = {
-            'total_games': total_games,
-            'overall': {
-                'wins': wins,
-                'losses': losses,
-                'draws': draws,
-                'win_rate': wins / total_games * 100,
-                'draw_rate': draws / total_games * 100,
-                'loss_rate': losses / total_games * 100,
-            },
-            'as_white': {
+        try:
+            total_games = len(self.game_data)
+            
+            # Count results
+            wins = sum(1 for game in self.game_data if 
+                      (game['result'] == "1-0" and game['my_engine_played_white']) or 
+                      (game['result'] == "0-1" and not game['my_engine_played_white']))
+            losses = sum(1 for game in self.game_data if 
+                        (game['result'] == "0-1" and game['my_engine_played_white']) or 
+                        (game['result'] == "1-0" and not game['my_engine_played_white']))
+            draws = sum(1 for game in self.game_data if game['result'] == "1/2-1/2")
+            
+            # Split games by color
+            white_games = [game for game in self.game_data if game['my_engine_played_white']]
+            black_games = [game for game in self.game_data if not game['my_engine_played_white']]
+            
+            # Calculate white statistics
+            white_stats = {
                 'games': len(white_games),
-                'wins': white_results.count("1-0"),
-                'losses': white_results.count("0-1"),
-                'draws': white_results.count("1/2-1/2"),
-            },
-            'as_black': {
+                'wins': sum(1 for game in white_games if game['result'] == "1-0"),
+                'losses': sum(1 for game in white_games if game['result'] == "0-1"),
+                'draws': sum(1 for game in white_games if game['result'] == "1/2-1/2")
+            }
+            if white_stats['games'] > 0:
+                white_stats['win_rate'] = (white_stats['wins'] / white_stats['games']) * 100
+                white_stats['loss_rate'] = (white_stats['losses'] / white_stats['games']) * 100
+                white_stats['draw_rate'] = (white_stats['draws'] / white_stats['games']) * 100
+            
+            # Calculate black statistics
+            black_stats = {
                 'games': len(black_games),
-                'wins': black_results.count("1-0"),
-                'losses': black_results.count("0-1"),
-                'draws': black_results.count("1/2-1/2"),
-            },
-            'avg_moves': sum(self.results['num_moves']) / total_games,
-            'avg_book_moves': sum(self.results['book_moves']) / total_games,
-            'avg_time_per_game': sum(self.results['total_time']) / total_games,
-            'termination_types': dict(pd.Series(self.results['terminations']).value_counts()),
-        }
-        
-        # Calculate win rates by color
-        for color in ['as_white', 'as_black']:
-            if summary[color]['games'] > 0:
-                summary[color]['win_rate'] = summary[color]['wins'] / summary[color]['games'] * 100
-                summary[color]['draw_rate'] = summary[color]['draws'] / summary[color]['games'] * 100
-                summary[color]['loss_rate'] = summary[color]['losses'] / summary[color]['games'] * 100
-        
-        return summary
-
-    def close(self):
-        """Clean up resources."""
-        if self.stockfish:
-            self.stockfish.quit()
+                'wins': sum(1 for game in black_games if game['result'] == "0-1"),
+                'losses': sum(1 for game in black_games if game['result'] == "1-0"),
+                'draws': sum(1 for game in black_games if game['result'] == "1/2-1/2")
+            }
+            if black_stats['games'] > 0:
+                black_stats['win_rate'] = (black_stats['wins'] / black_stats['games']) * 100
+                black_stats['loss_rate'] = (black_stats['losses'] / black_stats['games']) * 100
+                black_stats['draw_rate'] = (black_stats['draws'] / black_stats['games']) * 100
+            
+            # Calculate averages
+            avg_moves = sum(game['num_moves'] for game in self.game_data) / total_games if total_games > 0 else 0
+            avg_book_moves = sum(game['book_moves'] for game in self.game_data) / total_games if total_games > 0 else 0
+            avg_time = sum(game['total_time'] for game in self.game_data) / total_games if total_games > 0 else 0
+            
+            # Count termination types
+            termination_types = {}
+            for game in self.game_data:
+                term_type = game['termination']
+                termination_types[term_type] = termination_types.get(term_type, 0) + 1
+            
+            # Create summary dictionary
+            summary = {
+                'total_games': total_games,
+                'overall': {
+                    'wins': wins,
+                    'losses': losses,
+                    'draws': draws,
+                    'win_rate': (wins / total_games * 100) if total_games > 0 else 0,
+                    'draw_rate': (draws / total_games * 100) if total_games > 0 else 0,
+                    'loss_rate': (losses / total_games * 100) if total_games > 0 else 0
+                },
+                'as_white': white_stats,
+                'as_black': black_stats,
+                'avg_moves': avg_moves,
+                'avg_book_moves': avg_book_moves,
+                'avg_time_per_game': avg_time,
+                'termination_types': termination_types
+            }
+            
+            return summary
+            
+        except Exception as e:
+            print(f"Error generating summary: {e}")
+            return None
 
 def main():
     print("Batch Chess Engine Analysis")
@@ -474,41 +520,49 @@ def main():
     batch = BatchEngineMatch()
     try:
         summary = batch.play_batch(num_games, stockfish_elo=elo, num_cores=num_cores)
-        
-        print("\nAnalysis Complete!")
-        print("=" * 50)
-        print("Overall Statistics:")
-        print(f"Total Games: {summary['total_games']}")
-        print(f"Overall Win Rate: {summary['overall']['win_rate']:.1f}%")
-        print(f"Overall Draw Rate: {summary['overall']['draw_rate']:.1f}%")
-        print(f"Overall Loss Rate: {summary['overall']['loss_rate']:.1f}%")
-        
-        print("\nPerformance as White:")
-        print(f"Games: {summary['as_white']['games']}")
-        print(f"Win Rate: {summary['as_white'].get('win_rate', 0):.1f}%")
-        print(f"Draw Rate: {summary['as_white'].get('draw_rate', 0):.1f}%")
-        print(f"Loss Rate: {summary['as_white'].get('loss_rate', 0):.1f}%")
-        
-        print("\nPerformance as Black:")
-        print(f"Games: {summary['as_black']['games']}")
-        print(f"Win Rate: {summary['as_black'].get('win_rate', 0):.1f}%")
-        print(f"Draw Rate: {summary['as_black'].get('draw_rate', 0):.1f}%")
-        print(f"Loss Rate: {summary['as_black'].get('loss_rate', 0):.1f}%")
-        
-        print(f"\nAverage Moves per Game: {summary['avg_moves']:.1f}")
-        print(f"Average Book Moves per Game: {summary['avg_book_moves']:.1f}")
-        print(f"Average Time per Game: {summary['avg_time_per_game']:.1f} seconds")
-        
-        print("\nTermination Types:")
-        for term_type, count in summary['termination_types'].items():
-            print(f"  {term_type}: {count}")
+        if summary:  # Check if summary exists
+            print("\nAnalysis Complete!")
+            print("=" * 50)
+            print("Overall Statistics:")
+            print(f"Total Games: {summary['total_games']}")
+            print(f"Overall Win Rate: {summary['overall']['win_rate']:.1f}%")
+            print(f"Overall Draw Rate: {summary['overall']['draw_rate']:.1f}%")
+            print(f"Overall Loss Rate: {summary['overall']['loss_rate']:.1f}%")
+            
+            print("\nPerformance as White:")
+            print(f"Games: {summary['as_white']['games']}")
+            print(f"Win Rate: {summary['as_white'].get('win_rate', 0):.1f}%")
+            print(f"Draw Rate: {summary['as_white'].get('draw_rate', 0):.1f}%")
+            print(f"Loss Rate: {summary['as_white'].get('loss_rate', 0):.1f}%")
+            
+            print("\nPerformance as Black:")
+            print(f"Games: {summary['as_black']['games']}")
+            print(f"Win Rate: {summary['as_black'].get('win_rate', 0):.1f}%")
+            print(f"Draw Rate: {summary['as_black'].get('draw_rate', 0):.1f}%")
+            print(f"Loss Rate: {summary['as_black'].get('loss_rate', 0):.1f}%")
+            
+            print(f"\nAverage Moves per Game: {summary['avg_moves']:.1f}")
+            print(f"Average Book Moves per Game: {summary['avg_book_moves']:.1f}")
+            print(f"Average Time per Game: {summary['avg_time_per_game']:.1f} seconds")
+            
+            print("\nTermination Types:")
+            for term_type, count in summary['termination_types'].items():
+                print(f"  {term_type}: {count}")
+        else:
+            print("\nNo valid summary generated")
 
     except KeyboardInterrupt:
         print("\nBatch analysis interrupted!")
         print("Saving partial results...")
-        summary = batch.generate_summary()
-        # Print available statistics...
-        
+        try:
+            summary = batch.generate_summary()
+            if summary:
+                # Print available statistics...
+                print("\nPartial Results:")
+                print(f"Games completed: {summary['total_games']}")
+        except Exception as e:
+            print(f"Error generating partial summary: {e}")
+
     except Exception as e:
         print(f"\nError during batch analysis: {str(e)}")
         
@@ -520,6 +574,4 @@ if __name__ == "__main__":
     # Import at top of file
     import multiprocessing
     multiprocessing.freeze_support()  # For Windows compatibility
-    main()
-if __name__ == "__main__":
     main()

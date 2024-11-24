@@ -33,8 +33,83 @@ def integrate_with_batch_analysis(batch_match):
     
     # Save the updated experience
     learner.save_experience()
+def run_single_batch(batch_config):
+    """Standalone function to run a batch of games."""
+    start_game, batch_size, stockfish_elo, time_control = batch_config
+    stockfish = chess.engine.SimpleEngine.popen_uci("/opt/homebrew/bin/stockfish")
+    stockfish.configure({
+        "UCI_LimitStrength": True,
+        "UCI_Elo": stockfish_elo
+    })
+    
+    batch_results = []
+    for game_num in range(start_game, start_game + batch_size):
+        try:
+            my_engine_is_white = random.choice([True, False])
+            board = chess.Board()
+            game_stats = play_game(game_num, stockfish_elo, time_control, 
+                                 my_engine_is_white, stockfish, board)
+            batch_results.append(game_stats)
+            print(f"Completed game {game_num + 1}")
+        except Exception as e:
+            print(f"Error in game {game_num + 1}: {str(e)}")
+    
+    stockfish.quit()
+    return batch_results
 
 class BatchEngineMatch:
+    def __init__(self, stockfish_path="/opt/homebrew/bin/stockfish"):
+        self.stockfish = chess.engine.SimpleEngine.popen_uci(stockfish_path)
+        self.results = defaultdict(list)
+        self.game_data = []
+        
+        # Create base directory structure
+        self.base_dir = "engine_analysis"
+        self.pgn_dir = os.path.join(self.base_dir, "pgn_games")
+        self.stats_dir = os.path.join(self.base_dir, "statistics")
+        
+        for directory in [self.base_dir, self.pgn_dir, self.stats_dir]:
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+    def run_game_batch(self, start_game, batch_size, stockfish_elo, time_control):
+        """Run a batch of games."""
+        stockfish = chess.engine.SimpleEngine.popen_uci("/opt/homebrew/bin/stockfish")
+        stockfish.configure({
+            "UCI_LimitStrength": True,
+            "UCI_Elo": stockfish_elo
+        })
+        
+        batch_results = []
+        for game_num in range(start_game, start_game + batch_size):
+            try:
+                my_engine_is_white = random.choice([True, False])
+                game_stats = self.play_single_game(
+                    game_num, stockfish_elo, time_control, 
+                    my_engine_is_white, stockfish
+                )
+                batch_results.append(game_stats)
+                print(f"Completed game {game_num + 1}")
+            except Exception as e:
+                print(f"Error in game {game_num + 1}: {str(e)}")
+        
+        stockfish.quit()
+        return batch_results
+
+    def material_difference_too_large(self, board):
+        """Check if material difference is too large."""
+        return abs(evaluate_board(board)) > 1500  # 15 pawns worth
+    
+    def is_likely_draw(self, board):
+        """Check for likely draw conditions."""
+        # Only kings left
+        if (len(list(board.pieces(chess.PAWN, chess.WHITE))) == 0 and 
+            len(list(board.pieces(chess.PAWN, chess.BLACK))) == 0 and 
+            len(list(board.pieces(chess.ROOK, chess.WHITE))) == 0 and 
+            len(list(board.pieces(chess.ROOK, chess.BLACK))) == 0 and 
+            len(list(board.pieces(chess.QUEEN, chess.WHITE))) == 0 and 
+            len(list(board.pieces(chess.QUEEN, chess.BLACK))) == 0):
+            return True
+        return False
     def play_batch(self, num_games, stockfish_elo=1500, time_control=0.1, num_cores=None):
         """Play multiple games in parallel."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -42,47 +117,25 @@ class BatchEngineMatch:
         
         if num_cores is None:
             num_cores = multiprocessing.cpu_count() - 1
+        num_cores = min(num_cores, num_games)
         
-        # Calculate games per core
+        print(f"Starting batch of {num_games} games using {num_cores} cores")
+        
+        # Create batch configurations
+        batch_configs = []
         games_per_core = num_games // num_cores
         remaining_games = num_games % num_cores
-        
-        # Create game batches
-        game_batches = []
         start_game = 0
+        
         for i in range(num_cores):
             batch_size = games_per_core + (1 if i < remaining_games else 0)
             if batch_size > 0:
-                game_batches.append((start_game, batch_size))
+                batch_configs.append((start_game, batch_size, stockfish_elo, time_control))
                 start_game += batch_size
         
-        # Function to run a batch of games
-        def run_game_batch(start_game, batch_size):
-            stockfish = chess.engine.SimpleEngine.popen_uci("/opt/homebrew/bin/stockfish")
-            stockfish.configure({
-                "UCI_LimitStrength": True,
-                "UCI_Elo": stockfish_elo
-            })
-            
-            batch_results = []
-            for game_num in range(start_game, start_game + batch_size):
-                try:
-                    my_engine_is_white = random.choice([True, False])
-                    game_stats = self.play_single_game(
-                        game_num, stockfish_elo, time_control, 
-                        my_engine_is_white, stockfish
-                    )
-                    batch_results.append(game_stats)
-                    print(f"Completed game {game_num + 1}/{num_games}")
-                except Exception as e:
-                    print(f"Error in game {game_num + 1}: {str(e)}")
-            
-            stockfish.quit()
-            return batch_results
-        
-        # Run games in parallel
+        # Run games in parallel using the standalone function
         with multiprocessing.Pool(num_cores) as pool:
-            all_results = pool.starmap(run_game_batch, game_batches)
+            all_results = pool.map(run_single_batch, batch_configs)
         
         # Combine results
         self.game_data = [game for batch in all_results for game in batch]
@@ -92,14 +145,13 @@ class BatchEngineMatch:
         print("\nLearning from played games...")
         integrate_with_batch_analysis(self)
         
-        return self.generate_summary()
-    
-    def play_single_game(self, game_num, stockfish_elo, time_control, my_engine_is_white, stockfish):
-        """Play a single game and return statistics."""
+        return self.generate_summary()   
+         
+    def play_game(game_num, stockfish_elo, time_control, my_engine_is_white, stockfish, board):
+        """Standalone function to play a single game."""
         print(f"\nStarting game {game_num + 1}...")
         print(f"Playing as {'White' if my_engine_is_white else 'Black'}")
-    
-        board = chess.Board()
+        
         moves = []
         game_stats = {
             'game_number': game_num + 1,
@@ -116,22 +168,48 @@ class BatchEngineMatch:
         start_time = time.time()
         move_count = 0
         max_moves = 150
-        move_timeout = 10  # Reduced timeout
+        move_timeout = 10
         
         # Track repeated positions
         position_count = defaultdict(int)
         repeated_position_limit = 3
+        
+        def material_difference_too_large(board):
+            return abs(evaluate_board(board)) > 1500
+            
+        def is_likely_draw(board):
+            if (len(list(board.pieces(chess.PAWN, chess.WHITE))) == 0 and 
+                len(list(board.pieces(chess.PAWN, chess.BLACK))) == 0 and 
+                len(list(board.pieces(chess.ROOK, chess.WHITE))) == 0 and 
+                len(list(board.pieces(chess.ROOK, chess.BLACK))) == 0 and 
+                len(list(board.pieces(chess.QUEEN, chess.WHITE))) == 0 and 
+                len(list(board.pieces(chess.QUEEN, chess.BLACK))) == 0):
+                return True
+            return False
 
         while not board.is_game_over() and move_count < max_moves:
             move_count += 1
             move_start_time = time.time()
             
             # Check for repeated positions
-            current_pos = board.fen().split(' ')[0]  # Only consider piece positions
+            current_pos = board.fen().split(' ')[0]
             position_count[current_pos] += 1
             if position_count[current_pos] >= repeated_position_limit:
                 print(f"Position repeated {repeated_position_limit} times - forcing draw")
                 game_stats['termination'] = "repetition"
+                game_stats['result'] = "1/2-1/2"
+                game_stats['winner'] = "Draw"
+                break
+            
+            # Check early stopping conditions
+            if material_difference_too_large(board):
+                game_stats['termination'] = "mercy_rule"
+                game_stats['result'] = "1-0" if evaluate_board(board) > 0 else "0-1"
+                game_stats['winner'] = "Draw"
+                break
+                
+            if is_likely_draw(board):
+                game_stats['termination'] = "likely_draw"
                 game_stats['result'] = "1/2-1/2"
                 game_stats['winner'] = "Draw"
                 break
@@ -140,9 +218,9 @@ class BatchEngineMatch:
                 is_engine_turn = (board.turn == chess.WHITE) == my_engine_is_white
                 
                 if is_engine_turn:
-                    print(f"Engine thinking... (move {move_count}) Position: {board.fen()}")
+                    print(f"Engine thinking... (move {move_count})")
                     debug_info.clear()
-                    move = next_move(2, board)
+                    move = next_move(2, board)  # Reduced depth for speed
                     is_book = debug_info.get("book_move", False)
                     if is_book:
                         game_stats['book_moves'] += 1
@@ -189,7 +267,7 @@ class BatchEngineMatch:
                 eval_score = evaluate_board(board)
                 print(f"Move {move_count}: {move.uci()} {'(book)' if is_book else ''} [Eval: {eval_score/100:.2f}]")
                 
-                # Add a small delay between moves
+                # Small delay between moves
                 time.sleep(0.1)
                 
             except Exception as e:
@@ -201,8 +279,8 @@ class BatchEngineMatch:
         game_stats['total_time'] = time.time() - start_time
         game_stats['num_moves'] = len(moves)
         
-        # Handle game ending
-        if not game_stats.get('result'):  # Only set if not already set by other conditions
+        # Handle game ending if not already set
+        if not game_stats.get('result'):
             if board.is_checkmate():
                 white_won = board.turn == chess.BLACK
                 if white_won == my_engine_is_white:
@@ -228,49 +306,12 @@ class BatchEngineMatch:
             game_stats['winner'] = winner
             game_stats['result'] = result
         
-        # Update aggregated results
-        self.results['results'].append(game_stats['result'])
-        self.results['colors'].append('White' if my_engine_is_white else 'Black')
-        self.results['terminations'].append(game_stats['termination'])
-        self.results['num_moves'].append(game_stats['num_moves'])
-        self.results['book_moves'].append(game_stats['book_moves'])
-        self.results['total_time'].append(game_stats['total_time'])
-        
         print(f"\nGame {game_num + 1} completed:")
         print(f"Result: {game_stats['result']}")
         print(f"Termination: {game_stats['termination']}")
         print(f"Moves played: {game_stats['num_moves']}")
         
-        return game_stats
-    
-    # Add mercy rule - end game if material difference is too large
-    def material_difference_too_large(board):
-        return abs(evaluate_board(board)) > 1500  # 15 pawns worth
-    
-    # Add draw conditions
-    def is_likely_draw(board):
-        # Only kings left
-        if len(list(board.pieces(chess.PAWN, chess.WHITE))) == 0 and \
-           len(list(board.pieces(chess.PAWN, chess.BLACK))) == 0 and \
-           len(list(board.pieces(chess.ROOK, chess.WHITE))) == 0 and \
-           len(list(board.pieces(chess.ROOK, chess.BLACK))) == 0 and \
-           len(list(board.pieces(chess.QUEEN, chess.WHITE))) == 0 and \
-           len(list(board.pieces(chess.QUEEN, chess.BLACK))) == 0:
-            return True
-        return False
-    
-    while not board.is_game_over():
-        # Add early stopping conditions
-        if material_difference_too_large(board):
-            game_stats['termination'] = "mercy_rule"
-            game_stats['result'] = "1-0" if evaluate_board(board) > 0 else "0-1"
-            break
-            
-        if is_likely_draw(board):
-            game_stats['termination'] = "likely_draw"
-            game_stats['result'] = "1/2-1/2"
-            break
-    
+        return game_stats    
     def save_pgn(self, game_stats, timestamp, game_num):
         """Save individual game PGN."""
         # Ensure pgn_games directory exists within engine_analysis
